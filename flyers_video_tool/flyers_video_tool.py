@@ -69,7 +69,7 @@ SUPPORTED_TRANSITIONS = {"none", "crossfade", "fade", "slide"}
 WATERMARK_POSITIONS = {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
 PAGE_MAP_STOP_PATTERNS = [
     r"\banswer\s+key\b",
-    r"\banswers?\b",
+    r"\banswers\b",
     r"\btranscript\b",
     r"\btapescript\b",
     r"\baudioscript\b",
