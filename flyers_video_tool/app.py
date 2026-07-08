@@ -416,11 +416,13 @@ with batch_tab:
     batch_test = st.selectbox("Default test number", [1, 2, 3], index=0, key="batch_test")
     batch_page_map_upload = st.file_uploader("Optional default page_map.json", type=["json"], key="batch_default_page_map")
     batch_auto_page_map = st.checkbox("Auto detect page map per PDF", value=False, key="batch_auto_page_map")
-    batch_range_cols = st.columns(2)
+    batch_range_cols = st.columns(3)
     with batch_range_cols[0]:
-        batch_listening_start = st.number_input("Batch listening start page", min_value=1, value=1, step=1, key="batch_listening_start")
+        batch_printed_start = st.number_input("Printed Part 1 Start Page from book/TOC", min_value=1, value=4, step=1, key="batch_printed_start")
     with batch_range_cols[1]:
-        batch_listening_end = st.number_input("Batch listening end page", min_value=1, value=12, step=1, key="batch_listening_end")
+        batch_ocr_start = st.number_input("Batch PDF OCR Scan Start Page", min_value=1, value=1, step=1, key="batch_ocr_start")
+    with batch_range_cols[2]:
+        batch_ocr_end = st.number_input("Batch PDF OCR Scan End Page", min_value=1, value=20, step=1, key="batch_ocr_end")
     infer_test = st.checkbox("Infer Test 1/2/3 from filename", value=True)
     csv_only = st.checkbox("CSV only", value=False, key="batch_csv_only")
     overwrite = st.checkbox("Overwrite existing MP4 files", value=False, key="batch_overwrite")
@@ -491,8 +493,9 @@ with batch_tab:
                     batch_report=output_dir / "batch_report.csv",
                     page_map_config=batch_page_map_config,
                     auto_page_map=batch_auto_page_map,
-                    ocr_start_page=int(batch_listening_start),
-                    ocr_end_page=int(batch_listening_end),
+                    printed_start_page=int(batch_printed_start),
+                    ocr_start_page=int(batch_ocr_start),
+                    ocr_end_page=int(batch_ocr_end),
                     **batch_options,
                 )
                 st.session_state.batch_results = results
