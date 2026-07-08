@@ -137,6 +137,11 @@ def normalize_page_map_config(config: dict) -> dict:
         raise ValueError("Page map config must be a JSON object.")
     level = str(config.get("level", "flyers")).lower()
     test_value = int(config.get("test", 1))
+    
+    pdf_offset = config.get("pdf_offset")
+    if pdf_offset is not None:
+        pdf_offset = int(pdf_offset)
+        
     parts = config.get("parts")
     if not isinstance(parts, list) or not parts:
         raise ValueError("Page map config must contain a non-empty parts list.")
@@ -149,12 +154,22 @@ def normalize_page_map_config(config: dict) -> dict:
             raise ValueError(f"Duplicate part number in page map: {part_number}")
         seen_part_numbers.add(part_number)
         title = str(raw_part.get("title") or f"Part {part_number}")
+        
         pages = raw_part.get("pages")
+        printed_pages = raw_part.get("printed_pages")
+
+        if pages is None and printed_pages is not None and pdf_offset is not None:
+            pages = [int(p) + pdf_offset for p in printed_pages]
+        elif printed_pages is None and pages is not None and pdf_offset is not None:
+            printed_pages = [int(p) - pdf_offset for p in pages]
+
         if not isinstance(pages, list) or not pages:
             raise ValueError(f"{title}: pages must be a non-empty list.")
+            
         parsed_pages = [int(page) for page in pages]
         if any(page < 1 for page in parsed_pages):
             raise ValueError(f"{title}: PDF pages must start at 1.")
+            
         layout = str(raw_part.get("layout") or "auto").lower()
         if layout not in SUPPORTED_LAYOUTS:
             raise ValueError(f"{title}: layout must be one of {', '.join(sorted(SUPPORTED_LAYOUTS))}.")
@@ -165,9 +180,20 @@ def normalize_page_map_config(config: dict) -> dict:
                 layout = "side_by_side"
             else:
                 layout = "grid"
-        normalized_parts.append({"part": part_number, "title": title, "pages": parsed_pages, "layout": layout})
+                
+        part_dict = {"part": part_number, "title": title}
+        if printed_pages is not None:
+            part_dict["printed_pages"] = [int(p) for p in printed_pages]
+        part_dict["pages"] = parsed_pages
+        part_dict["layout"] = layout
+        normalized_parts.append(part_dict)
+        
     normalized_parts.sort(key=lambda item: item["part"])
-    return {"level": level, "test": test_value, "parts": normalized_parts}
+    result = {"level": level, "test": test_value}
+    if pdf_offset is not None:
+        result["pdf_offset"] = pdf_offset
+    result["parts"] = normalized_parts
+    return result
 
 
 def load_page_map_config(page_map_path: str | Path) -> dict:
@@ -225,6 +251,7 @@ def build_page_map_from_ocr_results(
     start_page: Optional[int] = None,
     max_page: Optional[int] = None,
     min_confidence: float = 55.0,
+    printed_start_page: Optional[int] = None,
 ) -> Tuple[dict, List[str]]:
     if not ocr_results:
         raise ValueError("OCR results are empty. Cannot build page map.")
@@ -270,6 +297,12 @@ def build_page_map_from_ocr_results(
                 score += 5
             if "look and listen" in normalized_text:
                 score += 5
+                
+            unwanted = ["reading and writing", "answer key", "answers", "transcript", "audioscript", "tapescript", "speaking test"]
+            for bad_word in unwanted:
+                if bad_word in normalized_heading or bad_word in normalized_text:
+                    score -= 50
+
             candidates.append(
                 {
                     "part": part_number,
@@ -316,6 +349,10 @@ def build_page_map_from_ocr_results(
     if stop_page is not None:
         final_page = min(final_page, stop_page - 1)
 
+    pdf_offset = None
+    if printed_start_page is not None and 1 in part_starts:
+        pdf_offset = part_starts[1]["page"] - printed_start_page
+
     parts = []
     ordered_starts = [(part, part_starts[part]["page"]) for part in found_parts]
     for index, (part_number, start_page) in enumerate(ordered_starts):
@@ -328,16 +365,21 @@ def build_page_map_from_ocr_results(
             pages = [start_page]
         else:
             pages = list(range(start_page, end_page + 1))
-        parts.append(
-            {
-                "part": part_number,
-                "title": f"Part {part_number}",
-                "pages": pages,
-                "layout": _default_layout_for_page_count(len(pages)),
-            }
-        )
+            
+        part_dict = {
+            "part": part_number,
+            "title": f"Part {part_number}",
+            "pages": pages,
+            "layout": _default_layout_for_page_count(len(pages)),
+        }
+        if pdf_offset is not None:
+            part_dict["printed_pages"] = [p - pdf_offset for p in pages]
+        parts.append(part_dict)
 
-    return normalize_page_map_config({"level": level, "test": int(test_number), "parts": parts}), warnings
+    result_config = {"level": level, "test": int(test_number), "parts": parts}
+    if pdf_offset is not None:
+        result_config["pdf_offset"] = pdf_offset
+    return normalize_page_map_config(result_config), warnings
 
 
 def ocr_pdf_pages(
@@ -414,6 +456,7 @@ def auto_detect_page_map_from_pdf(
     ocr_engine: str = "tesseract",
     ocr_language: str = "eng",
     min_confidence: float = 55.0,
+    printed_start_page: Optional[int] = None,
 ) -> Tuple[dict, List[str], List[dict]]:
     if end_page is None:
         raise ValueError(
@@ -436,6 +479,7 @@ def auto_detect_page_map_from_pdf(
         test_number=test_number,
         max_page=end_page,
         min_confidence=min_confidence,
+        printed_start_page=printed_start_page,
     )
     return config, warnings, ocr_results
 
@@ -636,8 +680,10 @@ def read_pairing_csv(pairing_csv: str | Path, output_dir: Optional[str | Path] =
                 page_map_config = load_page_map_config(page_map_path)
             raw_ocr_start = (row.get("ocr_start_page") or "").strip()
             raw_ocr_end = (row.get("ocr_end_page") or "").strip()
+            raw_printed_start = (row.get("printed_start_page") or "").strip()
             ocr_start_page = int(raw_ocr_start) if raw_ocr_start else None
             ocr_end_page = int(raw_ocr_end) if raw_ocr_end else None
+            printed_start_page = int(raw_printed_start) if raw_printed_start else None
             pairs.append(
                 {
                     "base_name": output_name,
@@ -650,6 +696,7 @@ def read_pairing_csv(pairing_csv: str | Path, output_dir: Optional[str | Path] =
                     "page_map_config": page_map_config,
                     "ocr_start_page": ocr_start_page,
                     "ocr_end_page": ocr_end_page,
+                    "printed_start_page": printed_start_page,
                     "status": "matched",
                 }
             )
@@ -1517,6 +1564,7 @@ def process_batch(
                 active_page_map_config = load_page_map_config(pair["page_map_path"])
             pair_ocr_start = pair.get("ocr_start_page") or ocr_start_page
             pair_ocr_end = pair.get("ocr_end_page") or ocr_end_page
+            pair_printed_start = pair.get("printed_start_page")
             should_auto_page_map = auto_page_map or (
                 not active_page_map_config and pair.get("ocr_start_page") and pair.get("ocr_end_page")
             )
@@ -1533,6 +1581,7 @@ def process_batch(
                     ocr_engine=ocr_engine,
                     ocr_language=ocr_language,
                     min_confidence=ocr_min_confidence,
+                    printed_start_page=pair_printed_start,
                 )
                 page_map_json = page_map_output_dir / f"{base_name}_detected_page_map.json"
                 export_page_map_config(active_page_map_config, page_map_json)
@@ -1611,6 +1660,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ocr-end-page", type=int, help="Last PDF page to OCR for page-map detection.")
     parser.add_argument("--listening-start-page", type=int, help="Alias for --ocr-start-page.")
     parser.add_argument("--listening-end-page", type=int, help="Alias for --ocr-end-page.")
+    parser.add_argument("--printed-start-page", type=int, help="Printed page number of Part 1 for offset calculation.")
     parser.add_argument("--ocr-render-scale", type=float, default=2.0, help="PDF render scale for OCR.")
     parser.add_argument("--ocr-min-confidence", type=float, default=55.0, help="Warn below this average OCR confidence.")
     parser.add_argument("--test", type=int, choices=[1, 2, 3], default=1, help="Test number for default page map.")
@@ -1734,6 +1784,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ocr_engine=args.ocr_engine,
                 ocr_language=args.ocr_language,
                 min_confidence=args.ocr_min_confidence,
+                printed_start_page=args.printed_start_page,
             )
             export_page_map_config(cli_page_map_config, args.page_map_output)
             for warning in page_map_warnings:

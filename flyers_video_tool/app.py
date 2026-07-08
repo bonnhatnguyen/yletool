@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from typing import Optional
 
 from flyers_video_tool import (
     auto_detect_page_map_from_pdf,
@@ -76,27 +77,36 @@ def page_map_to_dataframe(config: dict):
             {
                 "Part": part["part"],
                 "Title": part["title"],
+                "Printed pages": ",".join(str(page) for page in part.get("printed_pages", [])),
                 "PDF pages": ",".join(str(page) for page in part["pages"]),
                 "Layout": part["layout"],
+                "Lock PDF pages": False,
             }
             for part in config["parts"]
         ]
     )
 
 
-def page_map_dataframe_to_config(dataframe: pd.DataFrame, level: str, test_number: int):
+def page_map_dataframe_to_config(dataframe: pd.DataFrame, level: str, test_number: int, pdf_offset: Optional[int] = None):
     parts = []
     for _, row in dataframe.iterrows():
-        pages = [int(value.strip()) for value in str(row["PDF pages"]).replace(";", ",").split(",") if value.strip()]
-        parts.append(
-            {
-                "part": int(row["Part"]),
-                "title": str(row.get("Title") or f"Part {int(row['Part'])}"),
-                "pages": pages,
-                "layout": str(row.get("Layout") or "auto"),
-            }
-        )
-    return {"level": level.lower(), "test": int(test_number), "parts": parts}
+        pages = [int(value.strip()) for value in str(row["PDF pages"]).replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
+        printed_pages_str = str(row.get("Printed pages", ""))
+        printed_pages = [int(value.strip()) for value in printed_pages_str.replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
+        part_dict = {
+            "part": int(row["Part"]),
+            "title": str(row.get("Title") or f"Part {int(row['Part'])}"),
+            "pages": pages,
+            "layout": str(row.get("Layout") or "auto"),
+        }
+        if printed_pages:
+            part_dict["printed_pages"] = printed_pages
+        parts.append(part_dict)
+    
+    config = {"level": level.lower(), "test": int(test_number), "parts": parts}
+    if pdf_offset is not None:
+        config["pdf_offset"] = pdf_offset
+    return config
 
 
 def default_rows_for_page_map(config: dict):
@@ -190,11 +200,13 @@ with single_tab:
         level = st.selectbox("Level", ["starters", "movers", "flyers"], index=2, key="single_level")
         test_number = st.selectbox("Test number", [1, 2, 3], index=0, key="single_test")
         page_map_upload = st.file_uploader("Optional page_map.json", type=["json"], key="single_page_map")
-        range_cols = st.columns(2)
+        range_cols = st.columns(3)
         with range_cols[0]:
-            listening_start_page = st.number_input("Listening start page", min_value=1, value=1, step=1, key="single_listening_start")
+            printed_start_page = st.number_input("Printed Part 1 Start Page from book/TOC", min_value=1, value=4, step=1, key="single_printed_start")
         with range_cols[1]:
-            listening_end_page = st.number_input("Listening end page", min_value=1, value=12, step=1, key="single_listening_end")
+            ocr_scan_start_page = st.number_input("PDF OCR Scan Start Page", min_value=1, value=1, step=1, key="single_ocr_start")
+        with range_cols[2]:
+            ocr_scan_end_page = st.number_input("PDF OCR Scan End Page", min_value=1, value=20, step=1, key="single_ocr_end")
         auto_page_map_clicked = st.button("Auto detect page map", use_container_width=True)
         whisper_model = st.text_input("Whisper model", value="small", key="single_model")
         language = st.text_input("Language", value="en", key="single_language")
@@ -217,8 +229,9 @@ with single_tab:
                         output_dir=session_dir() / "ocr",
                         level=level,
                         test_number=test_number,
-                        start_page=int(listening_start_page),
-                        end_page=int(listening_end_page),
+                        start_page=int(ocr_scan_start_page),
+                        end_page=int(ocr_scan_end_page),
+                        printed_start_page=int(printed_start_page),
                     )
                     st.session_state.page_map_df = page_map_to_dataframe(detected_config)
                     st.session_state.page_map_level = level
@@ -245,6 +258,27 @@ with single_tab:
 
     with right:
         st.subheader("Editable page map")
+        
+        current_offset = st.session_state.get("pdf_offset", page_map_config.get("pdf_offset", 0))
+        offset_col, recompute_col = st.columns([0.6, 0.4])
+        with offset_col:
+            new_offset = st.number_input("pdf_offset", value=current_offset, step=1, key="ui_pdf_offset")
+        with recompute_col:
+            st.write("") # spacer
+            st.write("") # spacer
+            recompute_clicked = st.button("Recompute all from offset", use_container_width=True)
+            
+        if recompute_clicked or new_offset != current_offset:
+            st.session_state.pdf_offset = new_offset
+            df = st.session_state.page_map_df
+            for i, row in df.iterrows():
+                if not row.get("Lock PDF pages", False):
+                    printed_str = str(row.get("Printed pages", ""))
+                    printed = [int(p.strip()) for p in printed_str.replace(";", ",").split(",") if p.strip() and p.strip() != "nan"]
+                    if printed:
+                        df.at[i, "PDF pages"] = ",".join(str(p + new_offset) for p in printed)
+            st.session_state.page_map_df = df
+
         edited_page_map_df = st.data_editor(
             st.session_state.page_map_df,
             num_rows="dynamic",
@@ -252,15 +286,22 @@ with single_tab:
             column_config={
                 "Part": st.column_config.NumberColumn("Part", min_value=1, step=1, required=True),
                 "Title": st.column_config.TextColumn("Title", required=True),
+                "Printed pages": st.column_config.TextColumn("Printed pages", help="Example: 4,5"),
                 "PDF pages": st.column_config.TextColumn("PDF pages", help="Example: 7,8"),
                 "Layout": st.column_config.SelectboxColumn(
                     "Layout", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
                 ),
+                "Lock PDF pages": st.column_config.CheckboxColumn("Lock PDF pages", default=False),
             },
         )
         st.session_state.page_map_df = edited_page_map_df
 
-    active_page_map_config = page_map_dataframe_to_config(st.session_state.page_map_df, level, test_number)
+    active_page_map_config = page_map_dataframe_to_config(
+        st.session_state.page_map_df, 
+        level, 
+        test_number, 
+        pdf_offset=st.session_state.get("pdf_offset", page_map_config.get("pdf_offset"))
+    )
 
     if "timestamp_df" not in st.session_state:
         st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
