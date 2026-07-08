@@ -76,11 +76,11 @@ def page_map_to_dataframe(config: dict):
         [
             {
                 "Part": part["part"],
-                "Title": part["title"],
-                "Printed pages": ",".join(str(page) for page in part.get("printed_pages", [])),
-                "PDF pages": ",".join(str(page) for page in part["pages"]),
-                "Layout": part["layout"],
-                "Lock PDF pages": False,
+                "Tiêu đề": part["title"],
+                "Số trang sách (in)": ",".join(str(page) for page in part.get("printed_pages", [])),
+                "Số trang PDF thực tế": ",".join(str(page) for page in part["pages"]),
+                "Bố cục": part["layout"],
+                "Khóa trang PDF này": False,
             }
             for part in config["parts"]
         ]
@@ -90,14 +90,14 @@ def page_map_to_dataframe(config: dict):
 def page_map_dataframe_to_config(dataframe: pd.DataFrame, level: str, test_number: int, pdf_offset: Optional[int] = None):
     parts = []
     for _, row in dataframe.iterrows():
-        pages = [int(value.strip()) for value in str(row["PDF pages"]).replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
-        printed_pages_str = str(row.get("Printed pages", ""))
+        pages = [int(value.strip()) for value in str(row["Số trang PDF thực tế"]).replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
+        printed_pages_str = str(row.get("Số trang sách (in)", ""))
         printed_pages = [int(value.strip()) for value in printed_pages_str.replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
         part_dict = {
             "part": int(row["Part"]),
-            "title": str(row.get("Title") or f"Part {int(row['Part'])}"),
+            "title": str(row.get("Tiêu đề") or f"Part {int(row['Part'])}"),
             "pages": pages,
-            "layout": str(row.get("Layout") or "auto"),
+            "layout": str(row.get("Bố cục") or "auto"),
         }
         if printed_pages:
             part_dict["printed_pages"] = printed_pages
@@ -129,38 +129,38 @@ def default_rows_for_page_map(config: dict):
 def shared_render_options(prefix: str):
     cols = st.columns(5)
     with cols[0]:
-        resolution = st.selectbox("Resolution", ["1920x1080", "3840x2160"], key=f"{prefix}_resolution")
+        resolution = st.selectbox("Độ phân giải", ["1920x1080", "3840x2160"], key=f"{prefix}_resolution")
     with cols[1]:
-        background = st.selectbox("Background", ["white", "dark"], key=f"{prefix}_background")
+        background = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_background")
     with cols[2]:
-        transition_effect = st.selectbox("Transition", ["crossfade", "fade", "slide", "none"], key=f"{prefix}_transition")
+        transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], key=f"{prefix}_transition")
     with cols[3]:
         transition_duration = st.number_input(
-            "Transition seconds", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
+            "Thời gian chuyển cảnh (giây)", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
         )
     with cols[4]:
         render_scale = st.number_input(
-            "Render scale", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
+            "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
         )
 
-    wm_enabled = st.checkbox("Watermark", value=False, key=f"{prefix}_wm_enabled")
+    wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
     wm_cols = st.columns(6)
     with wm_cols[0]:
-        wm_text = st.text_input("Watermark text", key=f"{prefix}_wm_text")
+        wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
     with wm_cols[1]:
-        wm_image = st.file_uploader("PNG watermark", type=["png"], key=f"{prefix}_wm_image")
+        wm_image = st.file_uploader("Ảnh PNG đóng dấu", type=["png"], key=f"{prefix}_wm_image")
     with wm_cols[2]:
         wm_position = st.selectbox(
-            "Position",
-            ["bottom-right", "bottom-left", "top-right", "top-left", "center"],
+            "Vị trí",
+            ["dưới-phải", "dưới-trái", "trên-phải", "trên-trái", "giữa"],
             key=f"{prefix}_wm_position",
         )
     with wm_cols[3]:
-        wm_opacity = st.slider("Opacity", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
+        wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
     with wm_cols[4]:
-        wm_size = st.number_input("Size", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
+        wm_size = st.number_input("Kích thước", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
     with wm_cols[5]:
-        wm_margin = st.number_input("Margin", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
+        wm_margin = st.number_input("Khoảng cách lề", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
 
     watermark_image_path = None
     if wm_image is not None:
@@ -168,7 +168,7 @@ def shared_render_options(prefix: str):
 
     watermark_has_content = bool(wm_text or watermark_image_path)
     if wm_enabled and not watermark_has_content:
-        st.warning("Watermark is enabled. Add text or upload a PNG before exporting.")
+        st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
     watermark_options = normalize_watermark_options(
         enabled=bool(wm_enabled and watermark_has_content),
         text=wm_text or None,
@@ -190,26 +190,26 @@ def shared_render_options(prefix: str):
 
 
 st.title("Flyers Video Tool")
-single_tab, batch_tab = st.tabs(["Single video", "Batch processing"])
+single_tab, batch_tab = st.tabs(["Tạo 1 Video", "Xử lý hàng loạt"])
 
 with single_tab:
     left, right = st.columns([0.55, 0.45])
     with left:
-        pdf_file = st.file_uploader("PDF scan", type=["pdf"], key="single_pdf")
-        audio_file = st.file_uploader("MP3 listening audio", type=["mp3", "wav", "m4a"], key="single_audio")
-        level = st.selectbox("Level", ["starters", "movers", "flyers"], index=2, key="single_level")
-        test_number = st.selectbox("Test number", [1, 2, 3], index=0, key="single_test")
-        page_map_upload = st.file_uploader("Optional page_map.json", type=["json"], key="single_page_map")
+        pdf_file = st.file_uploader("File PDF bài thi", type=["pdf"], key="single_pdf")
+        audio_file = st.file_uploader("File Audio nghe (MP3)", type=["mp3", "wav", "m4a"], key="single_audio")
+        level = st.selectbox("Cấp độ", ["starters", "movers", "flyers"], index=2, key="single_level")
+        test_number = st.selectbox("Bài Test số", [1, 2, 3], index=0, key="single_test")
+        page_map_upload = st.file_uploader("File cấu hình trang (page_map.json) tuỳ chọn", type=["json"], key="single_page_map")
         range_cols = st.columns(3)
         with range_cols[0]:
-            printed_start_page = st.number_input("Printed Part 1 Start Page from book/TOC", min_value=1, value=4, step=1, key="single_printed_start")
+            printed_start_page = st.number_input("Trang sách/mục lục bắt đầu Phần 1", min_value=1, value=4, step=1, key="single_printed_start")
         with range_cols[1]:
-            ocr_scan_start_page = st.number_input("PDF OCR Scan Start Page", min_value=1, value=1, step=1, key="single_ocr_start")
+            ocr_scan_start_page = st.number_input("Trang PDF bắt đầu quét (OCR)", min_value=1, value=1, step=1, key="single_ocr_start")
         with range_cols[2]:
-            ocr_scan_end_page = st.number_input("PDF OCR Scan End Page", min_value=1, value=20, step=1, key="single_ocr_end")
-        auto_page_map_clicked = st.button("Auto detect page map", use_container_width=True)
-        whisper_model = st.text_input("Whisper model", value="small", key="single_model")
-        language = st.text_input("Language", value="en", key="single_language")
+            ocr_scan_end_page = st.number_input("Trang PDF kết thúc quét (OCR)", min_value=1, value=20, step=1, key="single_ocr_end")
+        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", use_container_width=True)
+        whisper_model = st.text_input("Mô hình Whisper", value="small", key="single_model")
+        language = st.text_input("Ngôn ngữ", value="en", key="single_language")
 
     if page_map_upload is not None:
         page_map_path = save_upload(page_map_upload, "page_maps")
@@ -219,11 +219,11 @@ with single_tab:
 
     if auto_page_map_clicked:
         if pdf_file is None:
-            st.warning("Upload a PDF before auto detecting page map.")
+            st.warning("Vui lòng tải file PDF lên trước khi nhận diện trang.")
         else:
             try:
                 pdf_path = save_upload(pdf_file)
-                with st.status("Auto detecting page map with local OCR...", expanded=True) as status:
+                with st.status("Đang nhận diện trang bằng OCR...", expanded=True) as status:
                     detected_config, warnings, _ocr_results = auto_detect_page_map_from_pdf(
                         pdf_path=pdf_path,
                         output_dir=session_dir() / "ocr",
@@ -240,7 +240,7 @@ with single_tab:
                     export_page_map_config(detected_config, detected_json)
                     for warning in warnings:
                         st.warning(warning)
-                    status.update(label="Page map detection finished", state="complete")
+                    status.update(label="Nhận diện trang hoàn tất", state="complete")
                 with detected_json.open("rb") as handle:
                     st.download_button("Download detected_page_map.json", handle, file_name="detected_page_map.json")
             except Exception as exc:
@@ -257,7 +257,7 @@ with single_tab:
         st.session_state.page_map_test = test_number
 
     with right:
-        st.subheader("Editable page map")
+        st.subheader("Bản đồ trang PDF (có thể chỉnh sửa)")
         
         current_offset = st.session_state.get("pdf_offset", page_map_config.get("pdf_offset", 0))
         offset_col, recompute_col = st.columns([0.6, 0.4])
@@ -266,17 +266,17 @@ with single_tab:
         with recompute_col:
             st.write("") # spacer
             st.write("") # spacer
-            recompute_clicked = st.button("Recompute all from offset", use_container_width=True)
+            recompute_clicked = st.button("Tính lại toàn bộ trang PDF theo Độ lệch (Offset)", use_container_width=True)
             
         if recompute_clicked or new_offset != current_offset:
             st.session_state.pdf_offset = new_offset
             df = st.session_state.page_map_df
             for i, row in df.iterrows():
-                if not row.get("Lock PDF pages", False):
-                    printed_str = str(row.get("Printed pages", ""))
+                if not row.get("Khóa trang PDF này", False):
+                    printed_str = str(row.get("Số trang sách (in)", ""))
                     printed = [int(p.strip()) for p in printed_str.replace(";", ",").split(",") if p.strip() and p.strip() != "nan"]
                     if printed:
-                        df.at[i, "PDF pages"] = ",".join(str(p + new_offset) for p in printed)
+                        df.at[i, "Số trang PDF thực tế"] = ",".join(str(p + new_offset) for p in printed)
             st.session_state.page_map_df = df
 
         edited_page_map_df = st.data_editor(
@@ -285,13 +285,13 @@ with single_tab:
             use_container_width=True,
             column_config={
                 "Part": st.column_config.NumberColumn("Part", min_value=1, step=1, required=True),
-                "Title": st.column_config.TextColumn("Title", required=True),
-                "Printed pages": st.column_config.TextColumn("Printed pages", help="Example: 4,5"),
-                "PDF pages": st.column_config.TextColumn("PDF pages", help="Example: 7,8"),
-                "Layout": st.column_config.SelectboxColumn(
-                    "Layout", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
+                "Tiêu đề": st.column_config.TextColumn("Tiêu đề", required=True),
+                "Số trang sách (in)": st.column_config.TextColumn("Số trang sách (in)", help="Example: 4,5"),
+                "Số trang PDF thực tế": st.column_config.TextColumn("Số trang PDF thực tế", help="Example: 7,8"),
+                "Bố cục": st.column_config.SelectboxColumn(
+                    "Bố cục", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
                 ),
-                "Lock PDF pages": st.column_config.CheckboxColumn("Lock PDF pages", default=False),
+                "Khóa trang PDF này": st.column_config.CheckboxColumn("Khóa trang PDF này", default=False),
             },
         )
         st.session_state.page_map_df = edited_page_map_df
@@ -308,11 +308,11 @@ with single_tab:
 
     controls = st.columns(3)
     with controls[0]:
-        detect_clicked = st.button("Auto detect timestamps", type="primary", use_container_width=True)
+        detect_clicked = st.button("Tự động nhận diện thời gian (Timestamps)", type="primary", use_container_width=True)
     with controls[1]:
-        reset_clicked = st.button("Reset template", use_container_width=True)
+        reset_clicked = st.button("Đặt lại bảng", use_container_width=True)
     with controls[2]:
-        csv_upload = st.file_uploader("Load timestamp CSV", type=["csv"], label_visibility="collapsed")
+        csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"], label_visibility="collapsed")
 
     if reset_clicked:
         st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
@@ -323,10 +323,10 @@ with single_tab:
 
     if detect_clicked:
         if pdf_file is None or audio_file is None:
-            st.warning("Upload both PDF and audio before detecting timestamps.")
+            st.warning("Vui lòng tải lên cả file PDF và Audio trước khi nhận diện thời gian.")
         else:
             audio_path = save_upload(audio_file)
-            with st.status("Detecting timestamps with local faster-whisper...", expanded=True) as status:
+            with st.status("Đang nhận diện thời gian bằng AI Whisper...", expanded=True) as status:
                 duration = get_audio_duration(audio_path)
                 segments = transcribe_audio(audio_path, whisper_model=whisper_model, language=language)
                 rows, warnings = detect_part_timestamps(
@@ -340,11 +340,11 @@ with single_tab:
                 st.session_state.timestamp_df = rows_to_dataframe(rows)
                 for warning in warnings:
                     st.warning(warning)
-                status.update(label="Timestamp detection finished", state="complete")
+                status.update(label="Nhận diện thời gian hoàn tất", state="complete")
             with detected_csv.open("rb") as handle:
                 st.download_button("Download detected_timestamps.csv", handle, file_name="detected_timestamps.csv")
 
-    st.subheader("Timestamp preview")
+    st.subheader("Bảng thời gian (Timestamps)")
     edited_df = st.data_editor(
         st.session_state.timestamp_df,
         num_rows="dynamic",
@@ -361,20 +361,20 @@ with single_tab:
     )
     st.session_state.timestamp_df = edited_df
 
-    st.subheader("Export")
+    st.subheader("Xuất Video")
     single_options = shared_render_options("single")
-    open_book_gap = st.number_input("Open-book gap", min_value=0, max_value=200, value=24, step=2, key="single_gap")
-    output_name = st.text_input("Output filename", value=f"{level}_test_{test_number}.mp4")
-    if st.button("Export video", type="primary"):
+    open_book_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="single_gap")
+    output_name = st.text_input("Tên file xuất ra", value=f"{level}_test_{test_number}.mp4")
+    if st.button("Xuất Video", type="primary"):
         if pdf_file is None or audio_file is None:
-            st.warning("Upload both PDF and audio before exporting.")
+            st.warning("Vui lòng tải lên cả file PDF và Audio trước khi xuất video.")
         else:
             try:
                 pdf_path = save_upload(pdf_file)
                 audio_path = save_upload(audio_file)
                 rows = dataframe_to_rows(edited_df)
                 output_path = session_dir() / output_name
-                with st.status("Exporting video...", expanded=True) as status:
+                with st.status("Đang xuất video...", expanded=True) as status:
                     create_video(
                         pdf_path=pdf_path,
                         audio_path=audio_path,
@@ -383,7 +383,7 @@ with single_tab:
                         open_book_gap=int(open_book_gap),
                         **single_options,
                     )
-                    status.update(label="Video exported", state="complete")
+                    status.update(label="Xuất video thành công", state="complete")
                 with output_path.open("rb") as handle:
                     st.download_button("Download MP4", handle, file_name=output_path.name, mime="video/mp4")
                 st.video(str(output_path))
@@ -391,48 +391,48 @@ with single_tab:
                 st.error(str(exc))
 
 with batch_tab:
-    st.subheader("Batch inputs")
-    source = st.radio("Input source", ["Upload multiple files", "Local folder path"], horizontal=True)
+    st.subheader("Cấu hình hàng loạt")
+    source = st.radio("Nguồn dữ liệu", ["Tải lên nhiều file", "Đường dẫn thư mục trên máy tính"], horizontal=True)
     folder_path = None
     pdf_paths = []
     audio_paths = []
-    if source == "Upload multiple files":
-        pdf_uploads = st.file_uploader("PDF files", type=["pdf"], accept_multiple_files=True, key="batch_pdfs")
+    if source == "Tải lên nhiều file":
+        pdf_uploads = st.file_uploader("Các file PDF", type=["pdf"], accept_multiple_files=True, key="batch_pdfs")
         audio_uploads = st.file_uploader(
-            "Audio files", type=["mp3", "wav", "m4a", "aac", "flac", "ogg"], accept_multiple_files=True, key="batch_audios"
+            "Các file Audio", type=["mp3", "wav", "m4a", "aac", "flac", "ogg"], accept_multiple_files=True, key="batch_audios"
         )
         page_map_uploads = st.file_uploader(
-            "Page map JSON files for pairing.csv", type=["json"], accept_multiple_files=True, key="batch_page_maps"
+            "Các file cấu hình trang (page_map.json)", type=["json"], accept_multiple_files=True, key="batch_page_maps"
         )
         pdf_paths = [save_upload(file, "batch_uploads") for file in pdf_uploads]
         audio_paths = [save_upload(file, "batch_uploads") for file in audio_uploads]
         for file in page_map_uploads:
             save_upload(file, "batch_uploads")
     else:
-        folder_path = st.text_input("Folder path containing matching PDF/audio files")
+        folder_path = st.text_input("Đường dẫn thư mục chứa các file PDF/Audio tương ứng")
 
-    pairing_upload = st.file_uploader("Optional pairing.csv", type=["csv"], key="batch_pairing_csv")
-    batch_level = st.selectbox("Default level", ["starters", "movers", "flyers"], index=2, key="batch_level")
-    batch_test = st.selectbox("Default test number", [1, 2, 3], index=0, key="batch_test")
-    batch_page_map_upload = st.file_uploader("Optional default page_map.json", type=["json"], key="batch_default_page_map")
-    batch_auto_page_map = st.checkbox("Auto detect page map per PDF", value=False, key="batch_auto_page_map")
+    pairing_upload = st.file_uploader("File ghép cặp (pairing.csv) tuỳ chọn", type=["csv"], key="batch_pairing_csv")
+    batch_level = st.selectbox("Cấp độ mặc định", ["starters", "movers", "flyers"], index=2, key="batch_level")
+    batch_test = st.selectbox("Bài Test mặc định", [1, 2, 3], index=0, key="batch_test")
+    batch_page_map_upload = st.file_uploader("File page_map.json mặc định tuỳ chọn", type=["json"], key="batch_default_page_map")
+    batch_auto_page_map = st.checkbox("Tự động nhận diện trang cho từng PDF", value=False, key="batch_auto_page_map")
     batch_range_cols = st.columns(3)
     with batch_range_cols[0]:
-        batch_printed_start = st.number_input("Printed Part 1 Start Page from book/TOC", min_value=1, value=4, step=1, key="batch_printed_start")
+        batch_printed_start = st.number_input("Trang sách/mục lục bắt đầu Phần 1", min_value=1, value=4, step=1, key="batch_printed_start")
     with batch_range_cols[1]:
-        batch_ocr_start = st.number_input("Batch PDF OCR Scan Start Page", min_value=1, value=1, step=1, key="batch_ocr_start")
+        batch_ocr_start = st.number_input("Trang PDF bắt đầu quét (Batch OCR)", min_value=1, value=1, step=1, key="batch_ocr_start")
     with batch_range_cols[2]:
-        batch_ocr_end = st.number_input("Batch PDF OCR Scan End Page", min_value=1, value=20, step=1, key="batch_ocr_end")
-    infer_test = st.checkbox("Infer Test 1/2/3 from filename", value=True)
-    csv_only = st.checkbox("CSV only", value=False, key="batch_csv_only")
-    overwrite = st.checkbox("Overwrite existing MP4 files", value=False, key="batch_overwrite")
-    batch_model = st.text_input("Whisper model", value="small", key="batch_model")
-    batch_language = st.text_input("Language", value="en", key="batch_language")
+        batch_ocr_end = st.number_input("Trang PDF kết thúc quét (Batch OCR)", min_value=1, value=20, step=1, key="batch_ocr_end")
+    infer_test = st.checkbox("Tự suy luận số Test từ tên file", value=True)
+    csv_only = st.checkbox("Chỉ tạo file CSV (không xuất Video)", value=False, key="batch_csv_only")
+    overwrite = st.checkbox("Ghi đè nếu đã có file MP4", value=False, key="batch_overwrite")
+    batch_model = st.text_input("Mô hình Whisper", value="small", key="batch_model")
+    batch_language = st.text_input("Ngôn ngữ", value="en", key="batch_language")
     output_dir = session_dir() / "batch_outputs"
     batch_options = shared_render_options("batch")
-    batch_gap = st.number_input("Open-book gap", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
+    batch_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
 
-    if st.button("Match files", use_container_width=True):
+    if st.button("Kiểm tra ghép nối file", use_container_width=True):
         try:
             if pairing_upload is not None:
                 pairing_path = save_upload(pairing_upload, "batch_uploads")
@@ -474,8 +474,8 @@ with batch_tab:
             hide_index=True,
         )
 
-        if st.button("Export batch videos", type="primary", use_container_width=True):
-            with st.status("Processing batch...", expanded=True) as status:
+        if st.button("Bắt đầu xử lý hàng loạt", type="primary", use_container_width=True):
+            with st.status("Đang xử lý hàng loạt...", expanded=True) as status:
                 batch_page_map_config = None
                 if batch_page_map_upload is not None:
                     batch_page_map_config = load_page_map_config(save_upload(batch_page_map_upload, "batch_uploads"))
@@ -499,11 +499,11 @@ with batch_tab:
                     **batch_options,
                 )
                 st.session_state.batch_results = results
-                status.update(label="Batch processing finished", state="complete")
+                status.update(label="Xử lý hàng loạt hoàn tất", state="complete")
 
     if "batch_results" in st.session_state:
         results = st.session_state.batch_results
-        st.subheader("Batch status")
+        st.subheader("Trạng thái xử lý hàng loạt")
         st.dataframe(
             pd.DataFrame(
                 [
