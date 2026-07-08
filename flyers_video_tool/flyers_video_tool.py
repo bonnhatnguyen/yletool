@@ -1538,6 +1538,7 @@ def process_batch(
     csv_only: bool = False,
     overwrite: bool = False,
     batch_report: Optional[str | Path] = None,
+    printed_start_page: Optional[int] = None,
 ) -> List[dict]:
     results: List[dict] = []
     csv_root = Path(detected_csv_dir) if detected_csv_dir else None
@@ -1564,7 +1565,7 @@ def process_batch(
                 active_page_map_config = load_page_map_config(pair["page_map_path"])
             pair_ocr_start = pair.get("ocr_start_page") or ocr_start_page
             pair_ocr_end = pair.get("ocr_end_page") or ocr_end_page
-            pair_printed_start = pair.get("printed_start_page")
+            pair_printed_start = pair.get("printed_start_page") or printed_start_page
             should_auto_page_map = auto_page_map or (
                 not active_page_map_config and pair.get("ocr_start_page") and pair.get("ocr_end_page")
             )
@@ -1757,6 +1758,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 csv_only=args.csv_only,
                 overwrite=args.overwrite,
                 batch_report=report_path,
+                printed_start_page=args.printed_start_page,
             )
             failed = [result for result in results if result.get("status") == "failed"]
             LOGGER.info("Batch finished: %s exported, %s failed.", len(results) - len(failed), len(failed))
