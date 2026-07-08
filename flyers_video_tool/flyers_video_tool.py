@@ -395,6 +395,9 @@ def ocr_pdf_pages(
         raise ValueError("Only local Tesseract OCR is currently implemented. Use --ocr-engine tesseract.")
     try:
         import pytesseract
+        import os
+        if os.name == "nt" and Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe").exists():
+            pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     except ImportError as exc:
         raise RuntimeError("Missing dependency pytesseract. Install with: pip install -r requirements.txt") from exc
 
