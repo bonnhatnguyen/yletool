@@ -1,0 +1,36 @@
+{
+  "level": "flyers",
+  "test": 1,
+  "parts": [
+    {
+      "part": 1,
+      "title": "Part 1",
+      "pages": [5],
+      "layout": "single"
+    },
+    {
+      "part": 2,
+      "title": "Part 2",
+      "pages": [6],
+      "layout": "single"
+    },
+    {
+      "part": 3,
+      "title": "Part 3",
+      "pages": [7, 8],
+      "layout": "side_by_side"
+    },
+    {
+      "part": 4,
+      "title": "Part 4",
+      "pages": [9, 10],
+      "layout": "side_by_side"
+    },
+    {
+      "part": 5,
+      "title": "Part 5",
+      "pages": [11],
+      "layout": "single"
+    }
+  ]
+}

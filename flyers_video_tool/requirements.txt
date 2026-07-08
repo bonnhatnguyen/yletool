@@ -1,0 +1,8 @@
+pymupdf
+moviepy
+pydub
+faster-whisper
+pandas
+pillow
+streamlit
+pytesseract

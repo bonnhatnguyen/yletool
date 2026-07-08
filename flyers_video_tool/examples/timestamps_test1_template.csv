@@ -1,0 +1,6 @@
+title,start,end,pdf_pages,layout
+Part 1,00:00,05:40,5,single
+Part 2,05:40,11:35,6,single
+Part 3,11:35,17:25,"7,8",side_by_side
+Part 4,17:25,23:05,"9,10",side_by_side
+Part 5,23:05,29:23,11,single
