@@ -7,3 +7,5 @@ pillow
 streamlit
 pytesseract
 audioop-lts
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
