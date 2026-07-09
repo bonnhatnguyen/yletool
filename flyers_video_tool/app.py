@@ -330,9 +330,10 @@ def shared_render_options(prefix: str, in_expander: bool = True):
 
 
 st.title("YLE Listening Video Tool")
-single_tab, batch_tab = st.tabs(["Tạo 1 Video", "Xử lý hàng loạt"])
 
-with single_tab:
+app_mode = st.sidebar.radio("CHẾ ĐỘ HOẠT ĐỘNG", ["Tạo 1 Video", "Xử lý hàng loạt"])
+
+if app_mode == "Tạo 1 Video":
     st.header("Bước 1: Tải lên & Cấu hình")
     col1, col2 = st.columns(2)
     with col1:
@@ -573,7 +574,7 @@ with single_tab:
             except Exception as exc:
                 st.error(str(exc))
 
-with batch_tab:
+elif app_mode == "Xử lý hàng loạt":
     st.subheader("Cấu hình hàng loạt")
     source = st.radio("Nguồn dữ liệu", ["Tải lên nhiều file", "Đường dẫn thư mục trên máy tính"], horizontal=True)
     folder_path = None

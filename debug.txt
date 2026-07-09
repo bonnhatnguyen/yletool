@@ -1,0 +1,1 @@
+'\nwith batch_tab:\n    st.subheader("Cấu hình hàng loạt")\n    source = st.radio("Nguồn dữ liệu", ["Tải lên nhiều file", "Đường dẫn thư mục trên máy tính"], horizontal=True)\n    folder_path = None\n    pdf_paths = []\n'
