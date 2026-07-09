@@ -790,6 +790,7 @@ def transcribe_audio(
             site_packages = next((p for p in sys.path if "site-packages" in p), None)
             if site_packages:
                 for lib in glob.glob(f"{site_packages}/nvidia/*/bin"):
+                    os.environ["PATH"] = lib + os.pathsep + os.environ.get("PATH", "")
                     try:
                         os.add_dll_directory(lib)
                     except Exception:
