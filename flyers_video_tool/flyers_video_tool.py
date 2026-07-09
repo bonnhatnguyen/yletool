@@ -683,6 +683,43 @@ def get_audio_duration(audio_path: str | Path) -> float:
     audio = AudioSegment.from_file(path)
     return len(audio) / 1000.0
 
+def get_format_duration(video_path: str | Path) -> float:
+    import subprocess
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return float(result.stdout.strip())
+
+def get_stream_durations(video_path: str | Path):
+    import subprocess
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "stream=codec_type,duration",
+        "-of", "csv=p=0",
+        str(video_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    audio_dur = None
+    video_dur = None
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split(",")
+        if len(parts) == 2:
+            codec_type, dur = parts
+            if dur.strip() != "N/A":
+                try:
+                    dur_val = float(dur.strip())
+                    if codec_type == "video":
+                        video_dur = dur_val
+                    elif codec_type == "audio":
+                        audio_dur = dur_val
+                except ValueError:
+                    pass
+    return video_dur, audio_dur
+
 
 def _collect_files(input_dir: Optional[str | Path], explicit_files: Optional[Sequence[str | Path]], suffixes: set) -> Dict[str, Path]:
     files: List[Path] = []
@@ -1874,14 +1911,23 @@ def create_video(
             cumulative_duration = end_sec
 
         audio_duration = get_audio_duration(audio)
-        duration_delta = audio_duration - sum(durations)
-        if abs(duration_delta) > 0.01:
-            if abs(duration_delta) > 5.0:
-                raise RuntimeError(
-                    "Tổng thời gian các Part không khớp audio. "
-                    "Hãy bấm Tự nhận diện đề + thời gian hoặc kiểm tra bảng thời gian."
-                )
+        sum_scene_durations = sum(durations)
+        last_timestamp_end = float(timestamp_rows[-1]["end_seconds"]) if timestamp_rows else 0
+        duration_delta = audio_duration - sum_scene_durations
+        
+        LOGGER.info(f"input_audio_duration = {audio_duration:.3f}")
+        LOGGER.info(f"sum_scene_durations = {sum_scene_durations:.3f}")
+        LOGGER.info(f"last_timestamp_end = {last_timestamp_end:.3f}")
+        LOGGER.info(f"duration_delta = {duration_delta:.3f}")
+        LOGGER.info(f"target_output_duration = {audio_duration:.3f}")
+        
+        if abs(audio_duration - last_timestamp_end) > 5.0:
+            raise RuntimeError(
+                "Tổng thời gian các Part không khớp audio. "
+                "Hãy bấm Tự nhận diện đề + thời gian hoặc kiểm tra bảng thời gian."
+            )
             
+        if abs(duration_delta) > 0.01:
             adjusted_last = durations[-1] + duration_delta
             LOGGER.warning(
                 "Adjusting final part duration by %.2fs so video duration matches audio duration.",
@@ -1935,19 +1981,43 @@ def create_video(
                 if encoder == "libx264":
                     ffmpeg_cmd.extend(["-tune", "stillimage"])
                 
+                import os
                 ffmpeg_cmd.extend([
                     "-r", str(fps),
                     "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "128k",
                     "-shortest",
+                    "-t", f"{audio_duration:.3f}",
                     str(temp_output)
                 ])
                 
                 try:
                     subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    shutil.move(str(temp_output), str(output))
+                    
+                    # Verify output
+                    output_format_duration = get_format_duration(temp_output)
+                    output_video_duration, output_audio_duration = get_stream_durations(temp_output)
+                    
+                    LOGGER.info(f"output_format_duration = {output_format_duration:.3f}")
+                    LOGGER.info(f"output_audio_duration = {output_audio_duration if output_audio_duration else 'N/A'}")
+                    LOGGER.info(f"output_video_duration = {output_video_duration if output_video_duration else 'N/A'}")
+                    LOGGER.info(f"encoder_used = {encoder}")
+                    
+                    if abs(output_format_duration - audio_duration) > 0.5:
+                        temp_output.unlink(missing_ok=True)
+                        raise ValueError(f"Video xuất ra dài hơn audio. Đã hủy file lỗi. Vui lòng thử lại hoặc gửi log ffprobe.")
+                        
+                    if output_video_duration and abs(output_video_duration - audio_duration) > 5.0:
+                        temp_output.unlink(missing_ok=True)
+                        raise ValueError(f"Video xuất ra dài hơn audio. Đã hủy file lỗi. Vui lòng thử lại hoặc gửi log ffprobe.")
+                        
+                    # Safely replace
+                    os.replace(str(temp_output), str(output))
                     success = True
                     break
+                except ValueError as ve:
+                    LOGGER.error(str(ve))
+                    raise RuntimeError(str(ve))
                 except subprocess.CalledProcessError as e:
                     LOGGER.error(f"FFmpeg {encoder} failed: {e.stderr}")
                     if progress_callback:

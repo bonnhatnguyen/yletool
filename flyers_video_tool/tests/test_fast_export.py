@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
 from flyers_video_tool.flyers_video_tool import _get_available_h264_encoders, create_video
+import os
 
 def test_get_available_h264_encoders_all():
     with patch("subprocess.run") as mock_run:
@@ -39,11 +40,15 @@ def test_get_available_h264_encoders_fallback_only():
 @patch("flyers_video_tool.flyers_video_tool.get_audio_duration")
 @patch("flyers_video_tool.flyers_video_tool._get_available_h264_encoders")
 @patch("subprocess.run")
-@patch("shutil.move")
+@patch("os.replace")
+@patch("flyers_video_tool.flyers_video_tool.get_format_duration")
+@patch("flyers_video_tool.flyers_video_tool.get_stream_durations")
 def test_fast_static_creates_concat_file_and_fallbacks(
-    mock_move, mock_run, mock_get_encoders, mock_get_audio_duration, mock_watermark, mock_make_scene, mock_render_pdf, mock_check_ffmpeg, mock_tempdir, tmp_path
+    mock_get_stream, mock_get_format, mock_replace, mock_run, mock_get_encoders, mock_get_audio_duration, mock_watermark, mock_make_scene, mock_render_pdf, mock_check_ffmpeg, mock_tempdir, tmp_path
 ):
     mock_get_audio_duration.return_value = 10.0
+    mock_get_format.return_value = 10.0
+    mock_get_stream.return_value = (10.0, 10.0)
     mock_render_pdf.return_value = tmp_path / "page_1.jpg"
     
     # Return 3 encoders, first two will fail, last one succeeds
@@ -103,7 +108,7 @@ def test_fast_static_creates_concat_file_and_fallbacks(
     assert "stillimage" in mock_run.call_args_list[2][0][0]
     
     # Check shutil.move was called once
-    mock_move.assert_called_once()
+    mock_replace.assert_called_once()
     
     # Check that concat files are correct
     concat_files = list(tmp_path.glob("concat.txt"))
@@ -182,9 +187,11 @@ def test_fast_static_duration_guard(tmp_path):
                     with patch("flyers_video_tool.flyers_video_tool.apply_watermark_to_scene"):
                         with patch("flyers_video_tool.flyers_video_tool._get_available_h264_encoders", return_value=[("libx264", {})]):
                             with patch("subprocess.run"):
-                                with patch("shutil.move"):
-                                    # Should not raise exception
-                                    create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
+                                with patch("os.replace"):
+                                        with patch("flyers_video_tool.flyers_video_tool.get_format_duration", return_value=12.0):
+                                            with patch("flyers_video_tool.flyers_video_tool.get_stream_durations", return_value=(12.0, 12.0)):
+                                                # Should not raise exception
+                                                create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
 
 def test_part1_cover_and_absolute_timeline(tmp_path):
     pdf_path = tmp_path / "test.pdf"
@@ -205,22 +212,66 @@ def test_part1_cover_and_absolute_timeline(tmp_path):
                     with patch("flyers_video_tool.flyers_video_tool.apply_watermark_to_scene"):
                         with patch("flyers_video_tool.flyers_video_tool._get_available_h264_encoders", return_value=[("libx264", {})]):
                             with patch("subprocess.run"):
-                                with patch("shutil.move"):
-                                    # Call create_video
-                                    create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static", include_cover_with_part1=True, cover_page=1)
-                                    
-                                    # First call to make_pages_scene should have 2 pages (cover + part1)
-                                    assert len(mock_make.call_args_list[0][0][0]) == 2
-                                    assert mock_make.call_args_list[0][0][2] == "auto" # Layout forced to auto
-                                    
-                                    # Second call should have 1 page (part2)
-                                    assert len(mock_make.call_args_list[1][0][0]) == 1
-                                    
-                                    # Now check concat.txt
-                                    concat_files = list(tmp_path.glob("**/concat.txt"))
-                                    if concat_files:
-                                        content = concat_files[0].read_text(encoding="utf-8")
-                                        # Duration of first scene should be 354 (absolute)
-                                        assert "duration 354.000" in content
-                                        # Duration of second scene should be 560 - 354 = 206
-                                        assert "duration 206.000" in content
+                                with patch("os.replace"):
+                                    with patch("flyers_video_tool.flyers_video_tool.get_format_duration", return_value=560.0):
+                                        with patch("flyers_video_tool.flyers_video_tool.get_stream_durations", return_value=(560.0, 560.0)):
+                                            # Call create_video
+                                            create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static", include_cover_with_part1=True, cover_page=1)
+                                            
+                                            # First call to make_pages_scene should have 2 pages (cover + part1)
+                                            assert len(mock_make.call_args_list[0][0][0]) == 2
+                                            assert mock_make.call_args_list[0][0][2] == "auto" # Layout forced to auto
+                                            
+                                            # Second call should have 1 page (part2)
+                                            assert len(mock_make.call_args_list[1][0][0]) == 1
+                                            
+                                            # Now check concat.txt
+                                            concat_files = list(tmp_path.glob("**/concat.txt"))
+                                            if concat_files:
+                                                content = concat_files[0].read_text(encoding="utf-8")
+                                                # Duration of first scene should be 354 (absolute)
+                                                assert "duration 354.000" in content
+                                                # Duration of second scene should be 560 - 354 = 206
+                                                assert "duration 206.000" in content
+
+@patch("flyers_video_tool.flyers_video_tool.tempfile.TemporaryDirectory")
+@patch("flyers_video_tool.flyers_video_tool._check_ffmpeg_available")
+@patch("flyers_video_tool.flyers_video_tool.render_pdf_page")
+@patch("flyers_video_tool.flyers_video_tool.make_pages_scene")
+@patch("flyers_video_tool.flyers_video_tool.apply_watermark_to_scene")
+@patch("flyers_video_tool.flyers_video_tool.get_audio_duration")
+@patch("flyers_video_tool.flyers_video_tool._get_available_h264_encoders")
+@patch("subprocess.run")
+@patch("flyers_video_tool.flyers_video_tool.get_format_duration")
+@patch("flyers_video_tool.flyers_video_tool.get_stream_durations")
+@patch("os.replace")
+def test_fast_static_ffprobe_rejects_long_video(
+    mock_replace, mock_get_stream, mock_get_format, mock_run, mock_get_encoders, mock_get_audio_duration, mock_watermark, mock_make_scene, mock_render_pdf, mock_check_ffmpeg, mock_tempdir, tmp_path
+):
+    mock_get_audio_duration.return_value = 1763.11
+    mock_get_format.return_value = 2100.00
+    mock_get_stream.return_value = (2100.00, 1763.11)
+    mock_render_pdf.return_value = tmp_path / "page_1.jpg"
+    mock_get_encoders.return_value = [("libx264", {})]
+    mock_run.return_value = MagicMock()
+    
+    mock_temp_obj = MagicMock()
+    mock_temp_obj.name = str(tmp_path)
+    mock_tempdir.return_value = mock_temp_obj
+    
+    pdf_path = tmp_path / "test.pdf"
+    pdf_path.touch()
+    audio_path = tmp_path / "test.mp3"
+    audio_path.touch()
+    output_path = tmp_path / "out.mp4"
+    
+    timestamp_rows = [
+        {"start_seconds": 0.0, "end_seconds": 1763.11, "pdf_pages": [1]}
+    ]
+    
+    with pytest.raises(RuntimeError, match="Video xuất ra dài hơn audio"):
+        create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
+        
+    mock_replace.assert_not_called()
+    assert "-t" in mock_run.call_args_list[0][0][0]
+    assert "1763.110" in mock_run.call_args_list[0][0][0]
