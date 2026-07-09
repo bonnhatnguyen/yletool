@@ -58,7 +58,7 @@ DEFAULT_PAGE_MAP: Dict[int, Dict[str, List[int]]] = {
 
 SUPPORTED_LEVELS = {"starters", "movers", "flyers"}
 SUPPORTED_LAYOUTS = {"single", "side_by_side", "grid", "vertical", "auto"}
-BOOK_INDEX_CACHE_VERSION = 2
+BOOK_INDEX_CACHE_VERSION = 3
 SUPPORTED_TIMESTAMP_PROVIDERS = {"whisper", "gemini", "auto"}
 GEMINI_MODEL = "gemini-3.5-flash"
 
@@ -550,6 +550,123 @@ def compute_file_hash(path: str | Path) -> str:
             hasher.update(chunk)
     return hasher.hexdigest()
 
+
+def detect_part_number_robust(text: str) -> Optional[int]:
+    if not text:
+        return None
+    t = text.lower()
+    # collapse whitespace
+    t = re.sub(r"\s+", " ", t)
+    # common OCR noise for part
+    t = re.sub(r"p\s*a\s*r\s*t", "part", t)
+    t = t.replace("practlce", "practice").replace("pract ice", "practice")
+    
+    # match part [number/letter]
+    # roman numerals or l, |, I
+    m = re.search(r"\bpart\s*([1-5]|one|two|three|four|five|i+|l+|\|+)\b", t)
+    if not m:
+        # maybe no space
+        m = re.search(r"\bpart([1-5])\b", t)
+        
+    if m:
+        val = m.group(1).lower()
+        if val in ["1", "one", "i", "l", "|"]: return 1
+        if val in ["2", "two", "ii", "ll", "||"]: return 2
+        if val in ["3", "three", "iii", "lll", "|||"]: return 3
+        if val in ["4", "four", "iv", "iv"]: return 4 # iv is unlikely to be OCR'd as something else commonly, maybe
+        if val in ["5", "five", "v"]: return 5
+        try:
+            return int(val)
+        except:
+            pass
+    return None
+
+def detect_test_number_robust(text: str) -> Optional[int]:
+    if not text:
+        return None
+    t = text.lower()
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"t\s*e\s*s\s*t", "test", t)
+    t = t.replace("practlce", "practice").replace("pract ice", "practice")
+    
+    # remove punctuation
+    t = re.sub(r"[:\-]", " ", t)
+    
+    m = re.search(r"\b(?:practice )?test\s*([0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)\b", t)
+    if m:
+        val = m.group(1).lower()
+        word_to_num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+        if val in word_to_num:
+            return word_to_num[val]
+        try:
+            return int(val)
+        except:
+            pass
+    return None
+
+def preprocess_image_for_ocr(img: Image.Image, psm: int = 3) -> Image.Image:
+    # Convert to grayscale
+    img = img.convert("L")
+    # Increase contrast
+    img = ImageOps.autocontrast(img, cutoff=1)
+    # Binarize
+    img = img.point(lambda x: 0 if x < 200 else 255, '1')
+    return img
+
+def parse_contents_page(text_pages: List[dict]) -> Tuple[List[dict], Optional[int]]:
+    candidates = []
+    # Only scan early pages for contents
+    contents_page_found = False
+    
+    for p in text_pages[:10]:
+        text = p.get("merged_text", "").lower()
+        if not text: continue
+        
+        # Check if contents page
+        if "contents" in text or "content" in text:
+            contents_page_found = True
+            
+        if not contents_page_found and not any(k in text for k in ["contents", "practice test", "test 1"]):
+            continue
+            
+        lines = text.split("\n")
+        for line in lines:
+            line = re.sub(r"\s+", " ", line)
+            # Find all tests mentioned in the line (e.g. Test 1 ... Test 2 ... Test 3)
+            # Some OCR merges whole contents into one line
+            for m_test in re.finditer(r"\b(?:practice )?test\s+(\d+)", line):
+                t_num = int(m_test.group(1))
+                
+                # look for the next number after this test declaration
+                idx = m_test.end()
+                next_part = line[idx:idx+50] # look ahead 50 chars
+                m_page = re.search(r"\b(?:page\s*)?(\d+)\b", next_part)
+                
+                if m_page:
+                    p_num = int(m_page.group(1))
+                    is_practice = "practice" in m_test.group(0)
+                    is_listening = "listening" in next_part
+                    
+                    label = "listening_start" if is_listening else ("practice_test_start" if is_practice else "test_start")
+                    
+                    existing = next((c for c in candidates if c["test"] == t_num), None)
+                    if existing:
+                        if label == "listening_start" and existing["label"] != "listening_start":
+                            existing["printed_page"] = p_num
+                            existing["label"] = label
+                    else:
+                        candidates.append({
+                            "test": t_num,
+                            "printed_page": p_num,
+                            "label": label
+                        })
+
+    # Estimate pdf_offset
+    # pdf_page = printed_page + offset  => offset = pdf_page - printed_page
+    # We can't know actual pdf_page yet without OCR matching, so we return candidates
+    # We will refine pdf_offset dynamically
+    return candidates, None
+
 def extract_pdf_text_index(
     pdf_path: str | Path, 
     use_ocr_fallback: bool = True,
@@ -582,60 +699,87 @@ def extract_pdf_text_index(
         is_sparse = len(norm_layer) < 40 or len(norm_layer.split()) < 5
         missing_anchors = not any(w in norm_layer for w in ["test", "listening", "part"])
         
-        do_ocr = use_ocr_fallback and (is_sparse or missing_anchors)
+        do_ocr = use_ocr_fallback and (is_sparse or missing_anchors or page_num <= 10)
         
         ocr_text = ""
         ocr_heading = ""
+        ocr_heading_top35 = ""
+        ocr_heading_top50 = ""
         confidence = 0.0
         
         if do_ocr:
             try:
-                ocr_res = ocr_pdf_pages(
-                    pdf_path=pdf_path,
-                    output_dir=output_dir,
-                    start_page=page_num,
-                    end_page=page_num,
-                )
-                if ocr_res:
-                    ocr_text = ocr_res[0].get("text", "")
-                    ocr_heading = ocr_res[0].get("heading_text", "")
-                    confidence = ocr_res[0].get("confidence", 0.0)
+                # Targeted OCR with pytesseract if available
+                # Actually, our `ocr_pdf_pages` function handles this, but it doesn't return crops directly.
+                # To satisfy the prompt without breaking existing flow, we'll call ocr_pdf_pages normally,
+                # but we would ideally want top 35/50 crops. 
+                # Let's enhance ocr_pdf_pages output temporarily by simulating it or just relying on its current text.
+                # The user requested specific preprocessing and crops. We can implement a local wrapper here if needed,
+                # but `ocr_pdf_pages` is already complex. Let's just use `ocr_pdf_pages` for now, but ensure we 
+                # run it with `--psm 11` or similar. We will just pass kwargs if supported, or handle it here.
+                
+                # For simplicity and given the constraint of rewriting `flyers_video_tool`, I'll use `ocr_pdf_pages` 
+                # and assume it gets the job done for the whole page. If we truly need crop-level OCR, we must
+                # render the page to image and use pytesseract directly.
+                import pytesseract
+                if doc is not None:
+                    pix = doc[i].get_pixmap(dpi=150)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    
+                    w, h = img.size
+                    img_top35 = preprocess_image_for_ocr(img.crop((0, 0, w, int(h*0.35))))
+                    img_top50 = preprocess_image_for_ocr(img.crop((0, 0, w, int(h*0.50))))
+                    img_full = preprocess_image_for_ocr(img)
+                    
+                    ocr_heading_top35 = pytesseract.image_to_string(img_top35, config='--psm 11').strip()
+                    ocr_heading_top50 = pytesseract.image_to_string(img_top50, config='--psm 11').strip()
+                    ocr_text = pytesseract.image_to_string(img_full, config='--psm 11').strip()
+                    ocr_heading = ocr_heading_top35 + " " + ocr_heading_top50
+                    confidence = 90.0 # estimated
+                else:
+                    ocr_res = ocr_pdf_pages(
+                        pdf_path=pdf_path,
+                        output_dir=output_dir,
+                        start_page=page_num,
+                        end_page=page_num,
+                    )
+                    if ocr_res:
+                        ocr_text = ocr_res[0].get("text", "")
+                        ocr_heading = ocr_res[0].get("heading_text", "")
+                        ocr_heading_top35 = ocr_heading
+                        ocr_heading_top50 = ocr_heading
+                        confidence = ocr_res[0].get("confidence", 0.0)
             except Exception as e:
                 if log_callback:
                     log_callback(f"Lỗi OCR trang {page_num}: {e}", "warning")
                     
         # Merge
         merged_text = text_layer + " " + ocr_text
-        merged_heading = text_layer + " " + ocr_heading # if fitz, we don't have bounding boxes easily without more logic, so assume all fitz text could be heading if it's there
+        merged_heading = text_layer + " " + ocr_heading 
         norm_merged = _normalize_text(merged_text)
         norm_heading = _normalize_text(merged_heading)
         
         text_source = "hybrid" if do_ocr and text_layer.strip() else ("ocr" if do_ocr else "text")
         
-        # Find anchors
-        anchors = []
-        for anchor in ["test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8", "test 9", "test 10", "listening", "part 1", "part 2", "part 3", "part 4", "part 5", "part one", "part two", "part three", "part four", "part five", "questions"]:
-            if anchor in norm_merged:
-                anchors.append(anchor)
-                
-        # Also try regex for test N
-        for m in re.finditer(r"\btest\s*(\d{1,2})\b", norm_merged):
-            t_str = f"test {m.group(1)}"
-            if t_str not in anchors:
-                anchors.append(t_str)
-
+        # Robust detectors
+        robust_test = detect_test_number_robust(merged_heading) or detect_test_number_robust(merged_text)
+        robust_part = detect_part_number_robust(merged_heading) or detect_part_number_robust(merged_text)
+        
         results.append({
             "page": page_num,
             "text_layer_text": text_layer,
             "text_layer_heading": text_layer,
             "ocr_text": ocr_text,
             "ocr_heading": ocr_heading,
+            "ocr_heading_top35": ocr_heading_top35,
+            "ocr_heading_top50": ocr_heading_top50,
             "merged_text": merged_text,
             "merged_heading": merged_heading,
             "normalized_merged": norm_merged,
             "normalized_heading": norm_heading,
             "text_source": text_source,
-            "anchors": anchors,
+            "robust_test": robust_test,
+            "robust_part": robust_part,
             "confidence": confidence
         })
         
@@ -656,7 +800,7 @@ def build_book_index_from_pdf(
 ) -> Tuple[dict, List[str]]:
     pdf_path_obj = Path(pdf_path)
     if log_callback:
-        log_callback("Bắt đầu quét Book Index từ PDF...", "info")
+        log_callback("Bắt đầu quét Book Index từ PDF (v3 Robust)...", "info")
         
     if progress_callback:
         progress_callback("Đang mã hoá file PDF...", 0.05)
@@ -687,126 +831,215 @@ def build_book_index_from_pdf(
         return {}, ["Không thể trích xuất text hoặc OCR từ PDF."]
 
     if progress_callback:
-        progress_callback("Đang phân tích cấu trúc Test...", 0.9)
+        progress_callback("Đang phân tích cấu trúc Test...", 0.8)
         
     expected_part_count = get_expected_part_count(level)
     
-    # Phase 2: Find test starts
-    test_candidates = {} # test_number: best_page
+    # Phase 2: Contents Parsing
+    contents_candidates, estimated_offset = parse_contents_page(text_pages)
     
-    for page_idx, p_data in enumerate(text_pages):
-        page_num = p_data["page"]
-        text = p_data.get("normalized_merged", "")
-        heading = p_data.get("normalized_heading", "")
-        if _is_contents_page(text):
-            continue
-            
-        test_matches = re.finditer(r"\btest\s*(\d{1,2})\b", heading + " " + text)
-        for match in test_matches:
-            t_num = int(match.group(1))
-            
-            # Rule 1: "Test N" + "Listening" OR "Test N" + "Part 1" (or close)
-            if "listening" in text or "part 1" in text or "part one" in text:
-                if t_num not in test_candidates:
-                    test_candidates[t_num] = page_num
+    # Estimate offset from contents candidates vs actual OCR
+    best_offset = None
+    if contents_candidates:
+        # try to find Test N in OCR pages
+        for cand in contents_candidates:
+            t_num = cand["test"]
+            printed_p = cand["printed_page"]
+            # search OCR around printed_p + 10
+            for p_data in text_pages:
+                if p_data["robust_test"] == t_num:
+                    offset = p_data["page"] - printed_p
+                    if best_offset is None or 0 <= offset <= 20: # reasonable offset
+                        best_offset = offset
+                        break
+            if best_offset is not None:
+                break
+                
+    pdf_offset = best_offset if best_offset is not None else 0
+    if log_callback:
+        log_callback(f"Estimated PDF offset: {pdf_offset}", "info")
+    
+    # Format Detection
+    book_format = "unknown"
+    if contents_candidates:
+        if len(contents_candidates) >= 8:
+            book_format = "succeed_flyers_8_tests"
+        else:
+            if any(c["label"] == "practice_test_start" for c in contents_candidates):
+                book_format = "cambridge_authentic_practice_tests"
             else:
-                # check next 2 pages context just in case
-                context_ok = False
-                for fwd in range(1, 3):
-                    if page_idx + fwd < len(text_pages):
-                        nxt_text = text_pages[page_idx + fwd].get("normalized_merged", "")
-                        if "listening" in nxt_text or "part 1" in nxt_text:
-                            context_ok = True
-                            break
-                if context_ok and t_num not in test_candidates:
-                    test_candidates[t_num] = page_num
+                book_format = "cambridge_authentic_3_tests"
+                
+    if log_callback:
+        log_callback(f"Detected book format: {book_format}", "info")
+    
+    # Phase 3: Scoring-based Backward Search / Candidate Selection
+    test_starts = {} # test_number: {"cover_page": X, "start_page": Y}
+    
+    # Seed from OCR directly first
+    for p_data in text_pages:
+        p_num = p_data["page"]
+        t_num = p_data["robust_test"]
+        p_part = p_data["robust_part"]
+        text = p_data.get("normalized_merged", "")
+        
+        if t_num:
+            # Score this page as a candidate
+            score = 0
+            if p_part == 1: score += 5
+            score += 4 # has test number
+            if "listening" in text: score += 3
+            if "questions" in text or "listen and" in text: score += 2
+            
+            # Check proximity to contents candidate
+            if contents_candidates:
+                expected_p = next((c["printed_page"] + pdf_offset for c in contents_candidates if c["test"] == t_num), None)
+                if expected_p and abs(expected_p - p_num) <= 3:
+                    score += 2
+                    
+            if t_num not in test_starts:
+                test_starts[t_num] = {"candidates": []}
+                
+            test_starts[t_num]["candidates"].append({
+                "page": p_num,
+                "score": score,
+                "part": p_part,
+                "text": text
+            })
+            
+    # Resolve candidates to cover_page and start_page
+    final_tests = {}
+    for t_num, data in test_starts.items():
+        candidates = data["candidates"]
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        
+        if not candidates: continue
+        
+        best_cand = candidates[0]
+        start_page = best_cand["page"]
+        cover_page = None
+        
+        # Check for cover page
+        if best_cand["part"] == 1:
+            # Look backwards 1 or 2 pages for a cover page
+            for offset in range(1, 3):
+                idx = start_page - 1 - offset
+                if 0 <= idx < len(text_pages):
+                    prev_data = text_pages[idx]
+                    if prev_data["robust_test"] == t_num and prev_data["robust_part"] is None:
+                        cover_page = prev_data["page"]
+                        if log_callback:
+                            log_callback(f"Test {t_num}: Cover page at {cover_page}, Part 1 at {start_page}", "info")
+                        break
+        elif best_cand["part"] is None:
+            # If the best candidate itself has no part (maybe it IS the cover page), look ahead for Part 1
+            for offset in range(1, 4):
+                idx = start_page - 1 + offset
+                if 0 <= idx < len(text_pages):
+                    nxt_data = text_pages[idx]
+                    if nxt_data["robust_part"] == 1:
+                        cover_page = start_page
+                        start_page = nxt_data["page"]
+                        if log_callback:
+                            log_callback(f"Test {t_num}: Cover page at {cover_page}, Part 1 at {start_page}", "info")
+                        break
+        
+        final_tests[t_num] = {
+            "cover_page": cover_page,
+            "start_page": start_page
+        }
 
-    sorted_tests = sorted(test_candidates.keys())
+    sorted_tests = sorted(final_tests.keys())
     tests_out = []
     
+    # Phase 4: Find Parts & Structural Inference
     for idx, t_num in enumerate(sorted_tests):
-        start_page = test_candidates[t_num]
+        start_page = final_tests[t_num]["start_page"]
+        cover_page = final_tests[t_num]["cover_page"]
+        section_start = cover_page if cover_page else start_page
         
         # Stop condition
         stop_page = text_pages[-1]["page"]
         if idx + 1 < len(sorted_tests):
-            next_test_start = test_candidates[sorted_tests[idx+1]]
-            stop_page = next_test_start - 1
+            next_test_section_start = final_tests[sorted_tests[idx+1]]["cover_page"] or final_tests[sorted_tests[idx+1]]["start_page"]
+            stop_page = next_test_section_start - 1
             
-        # Refine stop page by scanning from start_page to stop_page
         actual_stop_page = stop_page
+        # refine stop page based on Reading and Writing / Speaking
         for p_data in text_pages:
             p_num = p_data["page"]
-            if p_num <= start_page:
-                continue
-            if p_num > stop_page:
-                break
+            if p_num <= start_page: continue
+            if p_num > stop_page: break
             
             text = p_data.get("normalized_merged", "")
-            if _is_contents_page(text):
-                continue
-                
-            dynamic_stop_patterns = list(PAGE_MAP_STOP_PATTERNS)
-            if idx + 1 < len(sorted_tests):
-                dynamic_stop_patterns.append(rf"\btest\s+{sorted_tests[idx+1]}\b")
-                
-            if any(re.search(pattern, text) for pattern in dynamic_stop_patterns):
-                actual_stop_page = p_num
+            if "reading and writing" in text or "speaking" in text or "answer key" in text or "transcript" in text:
+                actual_stop_page = p_num - 1 # Stop BEFORE the reading and writing page
                 break
-                
-        # Find parts in [start_page, actual_stop_page]
+
+        # Scan for parts
         parts_found = {}
         for p_data in text_pages:
             p_num = p_data["page"]
             if p_num < start_page: continue
-            if p_num >= actual_stop_page: break
+            if p_num > actual_stop_page: break
             
-            heading = p_data.get("normalized_heading", "")
-            text = p_data.get("normalized_merged", "")
-            
-            for part_n in range(1, expected_part_count + 1):
-                # Prefer heading first, then text
-                if re.search(rf"\bpart\s*{part_n}\b", heading) or re.search(rf"\bpart\s*{part_n}\b", text):
-                    if part_n not in parts_found:
-                        parts_found[part_n] = p_num
-                        
-        # Rule 5: Backward search if Part 4/5 found but Part 1 missing
+            part_n = p_data["robust_part"]
+            if part_n and 1 <= part_n <= expected_part_count:
+                if part_n not in parts_found:
+                    parts_found[part_n] = p_num
+                    
+        # Structural Inference
         missing_early = any(p not in parts_found for p in range(1, 4))
         found_late = any(p in parts_found for p in [expected_part_count - 1, expected_part_count])
+        inferred = False
         
         if missing_early and found_late:
-            if log_callback:
-                log_callback(f"Test {t_num} thiếu Part đầu nhưng có Part cuối. Đang dò ngược...", "warning")
-            search_start = max(1, start_page - 12)
-            for p_num in range(start_page - 1, search_start - 1, -1):
-                p_data = text_pages[p_num - 1] # 0-indexed
-                text = p_data.get("normalized_merged", "")
-                if "test" in text and "listening" in text and "part 1" in text:
-                    start_page = p_num
-                    test_candidates[t_num] = start_page
-                    if log_callback:
-                        log_callback(f"Đã cập nhật trang bắt đầu Test {t_num} thành {start_page}", "info")
-                    # Re-scan for parts from new start_page
-                    parts_found = {}
-                    for p_data_rescan in text_pages:
-                        p_num_rescan = p_data_rescan["page"]
-                        if p_num_rescan < start_page: continue
-                        if p_num_rescan >= actual_stop_page: break
-                        heading = p_data_rescan.get("normalized_heading", "")
-                        txt = p_data_rescan.get("normalized_merged", "")
-                        for part_n in range(1, expected_part_count + 1):
-                            if re.search(rf"\bpart\s*{part_n}\b", heading) or re.search(rf"\bpart\s*{part_n}\b", txt):
-                                if part_n not in parts_found:
-                                    parts_found[part_n] = p_num_rescan
+            # Layout template for Flyers/Movers is [1, 1, 2, 2, 1]
+            # Starters is [1, 1, 1, 1, 1] - simplifed logic
+            layout = [1, 1, 2, 2, 1] if level in ["flyers", "movers"] else [1, 1, 1, 1, 1]
+            
+            # Find the first late part we have
+            anchor_part = None
+            anchor_page = None
+            for p_idx in reversed(range(1, expected_part_count + 1)):
+                if p_idx in parts_found:
+                    anchor_part = p_idx
+                    anchor_page = parts_found[p_idx]
                     break
+                    
+            if anchor_part:
+                current_p = anchor_page
+                for p_idx in reversed(range(1, anchor_part)):
+                    if p_idx not in parts_found:
+                        # subtract the pages of the inferred part
+                        pages_needed = layout[p_idx - 1]
+                        current_p -= pages_needed
+                        parts_found[p_idx] = current_p
+                        
+                        # Expand start_page if we inferred earlier pages
+                        if current_p < start_page:
+                            start_page = current_p
+                            # Also update the final_tests dict so tests_out reflects it
+                            final_tests[t_num]["start_page"] = start_page
+                        
+                        inferred = True
+                    else:
+                        current_p = parts_found[p_idx]
+                        
+            if inferred and log_callback:
+                log_callback(f"Test {t_num} thiếu phần đầu. Đã dùng Structural Inference.", "warning")
 
         part_list = []
-        for p_idx, part_n in enumerate(range(1, expected_part_count + 1)):
+        test_warnings = []
+        if inferred:
+            test_warnings.append(f"Test {t_num}: Part 1/2/3 inferred from YLE layout; please review.")
+            
+        for part_n in range(1, expected_part_count + 1):
             if part_n in parts_found:
                 p_start = parts_found[part_n]
                 
                 # find p_end
-                p_end = actual_stop_page - 1
+                p_end = actual_stop_page
                 for next_n in range(part_n + 1, expected_part_count + 2):
                     if next_n in parts_found:
                         p_end = parts_found[next_n] - 1
@@ -816,31 +1049,35 @@ def build_book_index_from_pdf(
                     p_end = p_start
                     
                 pages = list(range(p_start, p_end + 1))
-                layout = _default_layout_for_page_count(len(pages))
+                layout_mode = _default_layout_for_page_count(len(pages))
                 part_list.append({
                     "part": part_n,
                     "title": f"Part {part_n}",
                     "pages": pages,
-                    "layout": layout
+                    "layout": layout_mode
                 })
             else:
-                warnings.append(f"Test {t_num} thiếu Part {part_n}. Cần kiểm tra lại.")
+                test_warnings.append(f"Test {t_num} thiếu Part {part_n}. Cần kiểm tra lại.")
         
         tests_out.append({
             "test": t_num,
+            "cover_page": cover_page,
             "start_page": start_page,
             "end_page": actual_stop_page - 1,
             "parts": part_list,
-            "confidence": 100.0 if len(part_list) == expected_part_count else 50.0,
-            "warnings": [w for w in warnings if f"Test {t_num}" in w]
+            "confidence": 100.0 if not inferred and len(part_list) == expected_part_count else 50.0,
+            "warnings": test_warnings,
+            "status": "Review" if inferred else "OK"
         })
         if log_callback:
-            log_callback(f"Đã detect Test {t_num} (Trang {start_page} - {actual_stop_page - 1}), Parts: {len(part_list)}/{expected_part_count}", "info")
+            log_callback(f"Final Test {t_num}: Part 1={parts_found.get(1)}, Part 4={parts_found.get(4)}, Part 5={parts_found.get(5)}", "info")
 
     book_index = {
         "pdf_name": pdf_path_obj.name,
         "pdf_hash": file_hash,
         "level": level,
+        "format": book_format,
+        "estimated_pdf_offset": pdf_offset,
         "created_at": datetime.now().isoformat(),
         "tests": tests_out
     }
@@ -848,15 +1085,22 @@ def build_book_index_from_pdf(
     with cache_file.open('w', encoding='utf-8') as f:
         json.dump(book_index, f, indent=2, ensure_ascii=False)
         
-    # Phase 3: Export Debug
+    # Phase 5: Export Debug
     debug_path = Path(output_dir) / "book_index_debug.json"
-    debug_data = []
+    debug_data = {
+        "format": book_format,
+        "contents_candidates": contents_candidates,
+        "estimated_pdf_offset": pdf_offset,
+        "pages": []
+    }
     for p in text_pages:
-        debug_data.append({
+        debug_data["pages"].append({
             "page": p["page"],
             "text_source": p.get("text_source", ""),
-            "anchors": p.get("anchors", []),
-            "heading_snippet": p.get("merged_heading", "")[:200].replace("\n", " "),
+            "robust_test": p.get("robust_test"),
+            "robust_part": p.get("robust_part"),
+            "ocr_heading_top35": p.get("ocr_heading_top35", ""),
+            "ocr_heading_top50": p.get("ocr_heading_top50", ""),
             "merged_snippet": p.get("merged_text", "")[:500].replace("\n", " ")
         })
     with open(debug_path, "w", encoding="utf-8") as f:

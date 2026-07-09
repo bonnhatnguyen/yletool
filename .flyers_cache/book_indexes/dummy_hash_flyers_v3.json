@@ -1,0 +1,134 @@
+{
+  "pdf_name": "dummy.pdf",
+  "pdf_hash": "dummy_hash",
+  "level": "flyers",
+  "format": "unknown",
+  "estimated_pdf_offset": 0,
+  "created_at": "2026-07-09T22:30:04.971223",
+  "tests": [
+    {
+      "test": 2,
+      "cover_page": null,
+      "start_page": 23,
+      "end_page": 39,
+      "parts": [
+        {
+          "part": 1,
+          "title": "Part 1",
+          "pages": [
+            23
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 2,
+          "title": "Part 2",
+          "pages": [
+            24
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 3,
+          "title": "Part 3",
+          "pages": [
+            25,
+            26
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 4,
+          "title": "Part 4",
+          "pages": [
+            27,
+            28
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 5,
+          "title": "Part 5",
+          "pages": [
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ],
+          "layout": "grid"
+        }
+      ],
+      "confidence": 50.0,
+      "warnings": [
+        "Test 2: Part 1/2/3 inferred from YLE layout; please review."
+      ],
+      "status": "Review"
+    },
+    {
+      "test": 3,
+      "cover_page": null,
+      "start_page": 41,
+      "end_page": 49,
+      "parts": [
+        {
+          "part": 1,
+          "title": "Part 1",
+          "pages": [
+            41
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 2,
+          "title": "Part 2",
+          "pages": [
+            42
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 3,
+          "title": "Part 3",
+          "pages": [
+            43,
+            44
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 4,
+          "title": "Part 4",
+          "pages": [
+            45,
+            46
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 5,
+          "title": "Part 5",
+          "pages": [
+            47,
+            48,
+            49,
+            50
+          ],
+          "layout": "grid"
+        }
+      ],
+      "confidence": 50.0,
+      "warnings": [
+        "Test 3: Part 1/2/3 inferred from YLE layout; please review."
+      ],
+      "status": "Review"
+    }
+  ]
+}

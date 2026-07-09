@@ -1,0 +1,65 @@
+{
+  "pdf_name": "dummy.pdf",
+  "pdf_hash": "dummy_hash_inference",
+  "level": "flyers",
+  "format": "unknown",
+  "estimated_pdf_offset": 0,
+  "created_at": "2026-07-09T22:30:04.977466",
+  "tests": [
+    {
+      "test": 2,
+      "cover_page": null,
+      "start_page": 23,
+      "end_page": 28,
+      "parts": [
+        {
+          "part": 1,
+          "title": "Part 1",
+          "pages": [
+            23
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 2,
+          "title": "Part 2",
+          "pages": [
+            24
+          ],
+          "layout": "single"
+        },
+        {
+          "part": 3,
+          "title": "Part 3",
+          "pages": [
+            25,
+            26
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 4,
+          "title": "Part 4",
+          "pages": [
+            27,
+            28
+          ],
+          "layout": "side_by_side"
+        },
+        {
+          "part": 5,
+          "title": "Part 5",
+          "pages": [
+            29
+          ],
+          "layout": "single"
+        }
+      ],
+      "confidence": 50.0,
+      "warnings": [
+        "Test 2: Part 1/2/3 inferred from YLE layout; please review."
+      ],
+      "status": "Review"
+    }
+  ]
+}
