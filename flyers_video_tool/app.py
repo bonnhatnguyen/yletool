@@ -262,11 +262,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         elif bg_mode == "Ảnh nền tải lên":
             uploaded_bg = st.file_uploader("Upload ảnh nền", type=["png", "jpg", "jpeg"], key=f"{prefix}_bg_upload")
             if uploaded_bg:
-                # Save it temporarily
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
-                    f.write(uploaded_bg.getvalue())
-                    background_value = f.name
+                background_value = str(save_upload(uploaded_bg, "backgrounds"))
             else:
                 background_value = "white" # Fallback if not uploaded
         elif bg_mode == "Ảnh nền mặc định":
@@ -366,10 +362,16 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         
         watermark_has_content = bool(wm_text or wm_image or has_default_logo)
         
+        final_wm_image = None
+        if wm_image:
+            final_wm_image = str(save_upload(wm_image, "watermarks"))
+        elif has_default_logo:
+            final_wm_image = str(default_logo_path)
+            
         watermark_options = {
             "enabled": bool(wm_enabled and watermark_has_content),
             "text": wm_text.strip() if wm_text else None,
-            "image": wm_image if wm_image else (default_logo_path if has_default_logo else None),
+            "image": final_wm_image,
             "opacity": wm_opacity,
             "size": int(wm_size),
             "margin": int(wm_margin),
