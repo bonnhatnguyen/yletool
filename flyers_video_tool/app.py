@@ -194,13 +194,13 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             with col3_1:
                 if st.button("↗ Trên phải", key=f"{prefix}_tr", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "top"
-                    st.session_state[f"{prefix}_horizontal_position"] = "center"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
                 if st.button("→ Giữa phải", key=f"{prefix}_mr", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "center"
-                    st.session_state[f"{prefix}_horizontal_position"] = "center"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
                 if st.button("↘ Dưới phải", key=f"{prefix}_br", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "bottom"
-                    st.session_state[f"{prefix}_horizontal_position"] = "center"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
             
             with col3_2:
                 # Visual Preview Box
