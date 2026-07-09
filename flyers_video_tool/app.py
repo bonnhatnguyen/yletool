@@ -221,13 +221,21 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 align_items = flex_items.get(vert_pos, "flex-end")
                 justify_content = flex_justify.get(horiz_pos, "flex-end")
                 
-                preview_text = wm_text if wm_text else "WATERMARK"
+                if wm_image is not None:
+                    import base64
+                    img_bytes = wm_image.getvalue()
+                    b64_img = base64.b64encode(img_bytes).decode("utf-8")
+                    content_html = f'<img src="data:image/png;base64,{b64_img}" style="max-height: {max(20, wm_size/2)}px; opacity: {wm_opacity}; object-fit: contain;" />'
+                    if wm_text:
+                        st.info("Bạn đang dùng ảnh PNG làm watermark, chữ đóng dấu sẽ không được hiển thị.")
+                elif wm_text:
+                    content_html = f'<div style="color: rgba(255,255,255,{wm_opacity}); font-size: {max(10, wm_size/10)}px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 5px;">{wm_text}</div>'
+                else:
+                    content_html = f'<div style="color: rgba(255,255,255,0.3); font-size: 12px; padding: 5px;">Chưa có watermark</div>'
                 
                 html_code = f"""
-                <div style="width: 100%; aspect-ratio: 16/9; background-color: #222; border: 2px solid #555; border-radius: 8px; display: flex; align-items: {align_items}; justify-content: {justify_content}; padding: {wm_margin/4}px; box-sizing: border-box;">
-                    <div style="color: rgba(255,255,255,{wm_opacity}); font-size: {max(10, wm_size/10)}px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 5px;">
-                        {preview_text}
-                    </div>
+                <div style="width: 100%; aspect-ratio: 16/9; background-color: #222; border: 2px solid #555; border-radius: 8px; display: flex; align-items: {align_items}; justify-content: {justify_content}; padding: {wm_margin/4}px; box-sizing: border-box; overflow: hidden;">
+                    {content_html}
                 </div>
                 """
                 st.markdown(html_code, unsafe_allow_html=True)
@@ -461,7 +469,7 @@ with single_tab:
         can_export = False
         export_warnings.append("Vui lòng nhận diện thời gian, upload CSV, hoặc tick 'Tôi đã kiểm tra thời gian thủ công'.")
         
-    rows = dataframe_to_rows(edited_df)
+    rows = dataframe_to_rows(st.session_state.timestamp_df)
     
     for row in rows:
         if row.get("end_seconds", 0) <= row.get("start_seconds", 0):
@@ -487,7 +495,7 @@ with single_tab:
             try:
                 pdf_path = save_upload(pdf_file)
                 audio_path = save_upload(audio_file)
-                rows = dataframe_to_rows(edited_df)
+                rows = dataframe_to_rows(st.session_state.timestamp_df)
                 output_path = session_dir() / output_name
                 with st.status("Đang xuất video...", expanded=True) as status:
                     create_video(
