@@ -5,13 +5,87 @@ import pandas as pd
 import json
 import time
 class StreamlitTaskUI:
-    def __init__(self, title):
+    def __init__(self, title, state_key=None):
+        self.state_key = state_key
+        if state_key and state_key not in st.session_state:
+            st.session_state[state_key] = {"logs": [], "progress": 0.0, "message": title, "phase": ""}
+            
         self.status = st.status(title, expanded=True)
         self.progress_bar = self.status.progress(0.0)
         self.pct_text = self.status.empty()
+        self.phase_text = self.status.empty()
         self.log_container = self.status.container()
         self.logs = []
-        self.pct_text.write("0%")
+        self._last_progress = 0.0
+        
+        # Restore if state exists
+        if state_key and st.session_state[state_key]["logs"]:
+            self.logs = st.session_state[state_key]["logs"]
+            self._render_logs()
+            self.progress(st.session_state[state_key]["message"], st.session_state[state_key]["progress"])
+        else:
+            self.pct_text.write("0%")
+
+    def _render_logs(self):
+        # We join all logs into one code block for performance and compactness
+        # Do not spam Streamlit with thousands of individual st.text elements
+        if not self.logs:
+            self.log_container.empty()
+            return
+        
+        # Keep last 500 lines to avoid massive DOM slowdowns
+        visible_logs = self.logs[-500:]
+        log_text = "\n".join(visible_logs)
+        self.log_container.code(log_text, language="text")
+
+    def progress(self, message: str, progress: float, eta_seconds=None, detail=None):
+        progress = max(0.0, min(1.0, float(progress)))
+        self._last_progress = progress
+        self.progress_bar.progress(progress)
+        
+        pct_str = f"**{int(progress * 100)}%** - {message}"
+        if eta_seconds is not None:
+            pct_str += f" (ETA: {int(eta_seconds)}s)"
+            
+        self.pct_text.markdown(pct_str)
+        if detail:
+            self.phase_text.markdown(f"*{detail}*")
+            
+        if self.state_key:
+            st.session_state[self.state_key]["progress"] = progress
+            st.session_state[self.state_key]["message"] = message
+
+    def log(self, message: str, level="info"):
+        prefix = ""
+        if level == "error": prefix = "❌ "
+        elif level == "warning": prefix = "⚠️ "
+        elif level == "success": prefix = "✅ "
+        
+        full_msg = f"{prefix}{message}"
+        if not self.logs or self.logs[-1] != full_msg: # Prevent exact immediate duplicates
+            self.logs.append(full_msg)
+            self._render_logs()
+            if self.state_key:
+                st.session_state[self.state_key]["logs"] = self.logs
+
+    def success(self, message):
+        self.log(message, "success")
+        
+    def warning(self, message):
+        self.log(message, "warning")
+        
+    def error(self, message):
+        self.log(message, "error")
+
+    def complete(self, message):
+        self.status.update(label=message, state="complete", expanded=False)
+        self.progress_bar.empty()
+        self.pct_text.empty()
+        self.phase_text.empty()
+
+    def fail(self, message):
+        self.status.update(label=message, state="error", expanded=True)
+        self.log(message, "error")
 
     def progress(self, message: str, progress: float, eta_seconds=None, detail=None):
         pct = int(progress * 100)
@@ -517,6 +591,21 @@ if app_mode == "Tạo 1 Video":
         pdf_path = save_upload(pdf_file)
         
         col_scan, col_clear = st.columns([2, 1])
+        import shutil
+        import os
+        tess_path = shutil.which("tesseract")
+        if not tess_path:
+            win_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+            if os.path.exists(win_path):
+                tess_path = win_path
+        
+        if tess_path:
+            st.info(f"✔️ OCR engine: available (Tesseract path: `{tess_path}`)")
+            import pytesseract
+            pytesseract.pytesseract.tesseract_cmd = tess_path
+        else:
+            st.warning("⚠️ OCR engine: missing")
+
         with col_scan:
             scan_clicked = st.button("Quét Book Index từ PDF", type="secondary")
         with col_clear:
@@ -531,7 +620,7 @@ if app_mode == "Tạo 1 Video":
                 st.rerun()
 
         if scan_clicked:
-            ui = StreamlitTaskUI("Đang quét Book Index...")
+            ui = StreamlitTaskUI("Đang quét Book Index...", state_key="step2_page_map_logs")
             try:
                 index_data, warnings = build_book_index_from_pdf(
                     pdf_path=pdf_path,
@@ -832,33 +921,37 @@ if app_mode == "Tạo 1 Video":
                     
                 persistent_output_path = generate_unique_filename(output_name)
                 
-                with st.status("Đang xuất video...", expanded=True) as status:
-                    from flyers_video_tool import get_audio_duration, get_format_duration
-                    create_video(
-                        pdf_path=pdf_path,
-                        audio_path=audio_path,
-                        timestamp_rows=rows,
-                        output_path=str(persistent_output_path),
-                        **single_options,
-                    )
-                    
-                    audio_dur = get_audio_duration(audio_path)
-                    video_dur = get_format_duration(persistent_output_path)
-                    
-                    register_export(
-                        output_path=persistent_output_path,
-                        input_pdf_name=pdf_file.name,
-                        input_audio_name=audio_file.name,
-                        audio_duration=audio_dur,
-                        output_duration=video_dur,
-                        level=level,
-                        test_number=test_number,
-                        export_mode=single_options["export_mode"],
-                        fps=single_options["fps"],
-                        resolution=single_options["resolution"]
-                    )
-                    st.session_state.export_history = load_export_history()
-                    status.update(label="Xuất video thành công", state="complete")
+                ui = StreamlitTaskUI("Đang xuất video...", state_key="step4_export_logs")
+                from flyers_video_tool import get_audio_duration, get_format_duration
+                create_video(
+                    pdf_path=pdf_path,
+                    audio_path=audio_path,
+                    timestamp_rows=rows,
+                    output_path=str(persistent_output_path),
+                    progress_callback=ui.progress,
+                    log_callback=ui.log,
+                    status_callback=None,
+                    **single_options,
+                )
+                
+                audio_dur = get_audio_duration(audio_path)
+                video_dur = get_format_duration(persistent_output_path)
+                
+                register_export(
+                    output_path=persistent_output_path,
+                    input_pdf_name=pdf_file.name,
+                    input_audio_name=audio_file.name,
+                    audio_duration=audio_dur,
+                    output_duration=video_dur,
+                    level=level,
+                    test_number=test_number,
+                    export_mode=single_options["export_mode"],
+                    fps=single_options["fps"],
+                    resolution=single_options["resolution"]
+                )
+                st.session_state.export_history = load_export_history()
+                ui.complete("Đã xuất xong video!")
+                st.success(f"Video đã được lưu tại: `{persistent_output_path}`")
                 
                 st.success(f"Video đã được xuất và lưu thành công tại: {persistent_output_path.name}")
                 st.rerun() # Refresh to show in history

@@ -490,8 +490,8 @@ def ocr_pdf_pages(
     try:
         import pytesseract
         import os
-        if os.name == "nt" and Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe").exists():
-            pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.name == "nt" and Path(r"C:\\Program Files\\Tesseract-OCR\tesseract.exe").exists():
+            pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\tesseract.exe"
     except ImportError as exc:
         raise RuntimeError("Missing dependency pytesseract. Install with: pip install -r requirements.txt") from exc
 
@@ -689,6 +689,10 @@ def extract_pdf_text_index(
         
     for i in range(total_pages):
         page_num = i + 1
+        if progress_callback:
+            progress_callback(f"Đang phân tích trang {page_num}/{total_pages}", 0.10 + 0.55 * (page_num/max(1, total_pages)))
+        if log_callback:
+            log_callback(f"Extracting text page {page_num}/{total_pages}", "info")
         text_layer = ""
         if doc is not None:
             text_layer = doc[i].get_text()
@@ -709,19 +713,20 @@ def extract_pdf_text_index(
         
         if do_ocr:
             try:
-                # Targeted OCR with pytesseract if available
-                # Actually, our `ocr_pdf_pages` function handles this, but it doesn't return crops directly.
-                # To satisfy the prompt without breaking existing flow, we'll call ocr_pdf_pages normally,
-                # but we would ideally want top 35/50 crops. 
-                # Let's enhance ocr_pdf_pages output temporarily by simulating it or just relying on its current text.
-                # The user requested specific preprocessing and crops. We can implement a local wrapper here if needed,
-                # but `ocr_pdf_pages` is already complex. Let's just use `ocr_pdf_pages` for now, but ensure we 
-                # run it with `--psm 11` or similar. We will just pass kwargs if supported, or handle it here.
-                
-                # For simplicity and given the constraint of rewriting `flyers_video_tool`, I'll use `ocr_pdf_pages` 
-                # and assume it gets the job done for the whole page. If we truly need crop-level OCR, we must
-                # render the page to image and use pytesseract directly.
+                import shutil
+                import os
                 import pytesseract
+                
+                tess = pytesseract.pytesseract.tesseract_cmd
+                if tess == 'tesseract' and not shutil.which('tesseract'):
+                    if log_callback:
+                        log_callback("OCR engine missing", "error")
+                    tess = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+                    if os.path.exists(tess):
+                        pytesseract.pytesseract.tesseract_cmd = tess
+                    else:
+                        raise RuntimeError("Máy chưa cài Tesseract OCR hoặc chưa thêm vào PATH. PDF này là dạng scan ảnh nên bắt buộc cần OCR.\nCài đặt tại: C:\\Program Files\\Tesseract-OCR\\tesseract.exe")
+
                 if doc is not None:
                     pix = doc[i].get_pixmap(dpi=150)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -746,6 +751,8 @@ def extract_pdf_text_index(
                     if ocr_res:
                         ocr_text = ocr_res[0].get("text", "")
                         ocr_heading = ocr_res[0].get("heading_text", "")
+                        if log_callback:
+                            log_callback(f"OCR page {page_num}/{total_pages}", "info")
                         ocr_heading_top35 = ocr_heading
                         ocr_heading_top50 = ocr_heading
                         confidence = ocr_res[0].get("confidence", 0.0)
@@ -2470,6 +2477,8 @@ def create_video(
     transition_duration: float = 0.0,
     watermark_options: Optional[dict] = None,
     progress_callback = None,
+    log_callback = None,
+    status_callback = None,
     export_mode: str = "fast_static",
     include_cover_with_part1: bool = True,
     cover_page: int = 1,
@@ -2497,6 +2506,8 @@ def create_video(
         
     _check_ffmpeg_available()
     _validate_timestamp_rows(timestamp_rows)
+    if progress_callback: progress_callback("Validating inputs", 0.05)
+    if log_callback: log_callback("Inputs validated.", "info")
 
     temp_manager = tempfile.TemporaryDirectory(prefix="flyers_video_")
     work_dir = Path(temp_manager.name)
@@ -2563,6 +2574,7 @@ def create_video(
             cumulative_duration = end_sec
 
         audio_duration = get_audio_duration(audio)
+        if log_callback: log_callback(f"Audio duration: {audio_duration:.2f}s", "info")
         sum_scene_durations = sum(durations)
         last_timestamp_end = float(timestamp_rows[-1]["end_seconds"]) if timestamp_rows else 0
         duration_delta = audio_duration - sum_scene_durations
@@ -2599,6 +2611,7 @@ def create_video(
             concat_txt_path = work_dir / "concat.txt"
             LOGGER.info(f"Writing concat.txt with durations: {durations}")
             with open(concat_txt_path, "w", encoding="utf-8") as f:
+                if progress_callback: progress_callback("Writing FFmpeg concat list", 0.55)
                 for idx, duration in enumerate(durations):
                     scene_path = scene_paths[idx]
                     # Escape single quotes for ffmpeg
@@ -2615,6 +2628,7 @@ def create_video(
             
             last_error = None
             success = False
+            if log_callback: log_callback(f"Available encoders: {[e for e, _ in available_encoders]}", "info")
             for encoder, encoder_opts in available_encoders:
                 if progress_callback:
                     progress_callback(f"Đang xuất video bằng {encoder}...", 0.30, None)
@@ -2671,6 +2685,7 @@ def create_video(
                 except subprocess.CalledProcessError as e:
                     stderr = e.stderr if e.stderr else "Unknown error"
                     LOGGER.error(f"FFmpeg {encoder} failed: {stderr}")
+                    if log_callback: log_callback(f"Encoder {encoder} failed: {stderr[-200:]}", "error")
                     
                     if "Driver does not support the required nvenc API version" in stderr:
                         LOGGER.warning("Marking h264_nvenc as unsupported for this session.")
@@ -2853,7 +2868,9 @@ def process_batch(
                     pdf_path=pair["pdf_path"],
                     output_dir=csv_root or Path(pair["output_path"]).parent,
                     level=active_level,
-                    use_ocr_fallback=True
+                    use_ocr_fallback=True,
+                    progress_callback=progress_ui.progress if progress_ui else None,
+                    log_callback=progress_ui.log if progress_ui else None
                 )
                 
                 # Find matching test
@@ -3225,3 +3242,56 @@ def generate_preview_scene(
             }
 
 
+
+
+def _run_ffmpeg_with_progress(cmd, audio_duration, progress_callback=None, log_callback=None):
+    import subprocess
+    import threading
+    import queue
+    
+    cmd = list(cmd)
+    if "-progress" not in cmd:
+        cmd.extend(["-progress", "pipe:1", "-nostats"])
+        
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
+    q = queue.Queue()
+    
+    def reader(pipe, is_err):
+        for line in pipe:
+            q.put((is_err, line))
+            
+    t1 = threading.Thread(target=reader, args=(p.stdout, False), daemon=True)
+    t2 = threading.Thread(target=reader, args=(p.stderr, True), daemon=True)
+    t1.start()
+    t2.start()
+    
+    stderr_lines = []
+    
+    while True:
+        if p.poll() is not None and q.empty():
+            break
+        try:
+            is_err, line = q.get(timeout=0.1)
+            if is_err:
+                stderr_lines.append(line)
+            else:
+                if line.startswith("out_time_ms="):
+                    try:
+                        ms = int(line.split("=")[1].strip())
+                        sec = ms / 1_000_000.0
+                        ratio = sec / audio_duration if audio_duration > 0 else 0
+                        overall = 0.60 + (ratio * 0.30)
+                        overall = max(0.60, min(0.90, overall))
+                        if progress_callback:
+                            progress_callback(f"FFmpeg encoding {sec:.1f}s / {audio_duration:.1f}s", overall)
+                    except:
+                        pass
+        except queue.Empty:
+            pass
+            
+    t1.join()
+    t2.join()
+    
+    if p.returncode != 0:
+        return False, "".join(stderr_lines)
+    return True, "".join(stderr_lines)
