@@ -586,6 +586,7 @@ def normalize_watermark_options(
     opacity: float = 0.35,
     size: int = 120,
     margin: int = 32,
+    **kwargs
 ) -> dict:
     if not enabled:
         return {
