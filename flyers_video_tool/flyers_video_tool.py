@@ -1947,7 +1947,7 @@ def create_video(
                     LOGGER.info(f"output_video_duration = {output_video_duration if output_video_duration else 'N/A'}")
                     LOGGER.info(f"encoder_used = {encoder}")
                     
-                    if abs(output_format_duration - audio_duration) > 0.5:
+                    if abs(output_format_duration - audio_duration) > 2.0:
                         temp_output.unlink(missing_ok=True)
                         raise ValueError(f"Video xuất ra dài hơn audio. Đã hủy file lỗi. Vui lòng thử lại hoặc gửi log ffprobe.")
                         
