@@ -1396,8 +1396,7 @@ def make_single_page_scene(
     margin_ratio: float = 0.035,
 ) -> Path:
     width, height = resolution
-    bg = _background_rgb(background)
-    canvas = Image.new("RGB", resolution, bg)
+    canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     with Image.open(page_image_path) as image:
         fitted = _fit_image(image.convert("RGB"), width - margin * 2, height - margin * 2)
@@ -1420,8 +1419,7 @@ def make_double_page_scene(
     margin_ratio: float = 0.035,
 ) -> Path:
     width, height = resolution
-    bg = _background_rgb(background)
-    canvas = Image.new("RGB", resolution, bg)
+    canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     available_width = width - margin * 2 - open_book_gap
     available_height = height - margin * 2
@@ -1459,8 +1457,7 @@ def make_grid_page_scene(
     if not page_image_paths:
         raise ValueError("Grid scene requires at least one page image.")
     width, height = resolution
-    bg = _background_rgb(background)
-    canvas = Image.new("RGB", resolution, bg)
+    canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     count = len(page_image_paths)
     cols = math.ceil(math.sqrt(count))
@@ -1496,8 +1493,7 @@ def make_vertical_page_scene(
     if not page_image_paths:
         raise ValueError("Vertical scene requires at least one page image.")
     width, height = resolution
-    bg = _background_rgb(background)
-    canvas = Image.new("RGB", resolution, bg)
+    canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     count = len(page_image_paths)
     cell_height = (height - margin * 2 - gap * (count - 1)) // count
