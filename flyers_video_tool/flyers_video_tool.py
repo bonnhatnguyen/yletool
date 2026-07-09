@@ -1626,20 +1626,22 @@ def _check_ffmpeg_available() -> None:
 
 
 
-def _get_best_h264_encoder() -> tuple[str, dict]:
+def _get_available_h264_encoders() -> list[tuple[str, dict]]:
+    encoders = []
     try:
         import subprocess
         result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         output = result.stdout
         if "h264_nvenc" in output:
-            return "h264_nvenc", {"preset": "fast"}
+            encoders.append(("h264_nvenc", {"preset": "fast"}))
         if "h264_qsv" in output:
-            return "h264_qsv", {"preset": "veryfast"}
+            encoders.append(("h264_qsv", {"preset": "veryfast"}))
         if "h264_amf" in output:
-            return "h264_amf", {"quality": "speed"}
+            encoders.append(("h264_amf", {"quality": "speed"}))
     except Exception:
         pass
-    return "libx264", {"preset": "ultrafast"}
+    encoders.append(("libx264", {"preset": "ultrafast"}))
+    return encoders
 
 def _validate_timestamp_rows(rows: Sequence[dict]) -> None:
     previous_end = -math.inf
@@ -1794,7 +1796,6 @@ def create_video(
     _check_ffmpeg_available()
     _validate_timestamp_rows(timestamp_rows)
 
-    AudioFileClip, ImageClip, ImageSequenceClip, concatenate_videoclips = _moviepy_imports()
     temp_manager = tempfile.TemporaryDirectory(prefix="flyers_video_")
     work_dir = Path(temp_manager.name)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1851,55 +1852,78 @@ def create_video(
         LOGGER.info("Creating video...")
         
         if export_mode == "fast_static":
+            transition_effect = "none"
             if progress_callback:
                 progress_callback("Đang phân tích phần cứng video...", 0.25, None)
             
-            encoder, encoder_opts = _get_best_h264_encoder()
-            
-            if progress_callback:
-                progress_callback(f"Đang xuất video (Fast Mode - {encoder})...", 0.30, None)
+            available_encoders = _get_available_h264_encoders()
             
             concat_txt_path = work_dir / "concat.txt"
             with open(concat_txt_path, "w", encoding="utf-8") as f:
                 for idx, duration in enumerate(durations):
                     scene_path = scene_paths[idx]
-                    safe_path = str(scene_path).replace('\\', '/')
+                    # Escape single quotes for ffmpeg
+                    safe_path = str(scene_path).replace('\\', '/').replace("'", "\\'")
                     f.write(f"file '{safe_path}'\n")
                     f.write(f"duration {duration:.3f}\n")
                 
                 # Repeat last file for ffmpeg concat quirk
-                safe_last_path = str(scene_paths[-1]).replace('\\', '/')
+                safe_last_path = str(scene_paths[-1]).replace('\\', '/').replace("'", "\\'")
                 f.write(f"file '{safe_last_path}'\n")
             
             import subprocess
-            ffmpeg_cmd = [
-                "ffmpeg", "-y", 
-                "-f", "concat", "-safe", "0", "-i", str(concat_txt_path),
-                "-i", str(audio),
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", encoder,
-            ]
-            for k, v in encoder_opts.items():
-                ffmpeg_cmd.extend([f"-{k}", v])
+            import shutil
             
-            ffmpeg_cmd.extend([
-                "-tune", "stillimage",
-                "-r", str(fps),
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "128k",
-                "-shortest",
-                str(output)
-            ])
+            last_error = None
+            success = False
+            for encoder, encoder_opts in available_encoders:
+                if progress_callback:
+                    progress_callback(f"Đang xuất video (Fast Mode - {encoder})...", 0.30, None)
+                
+                temp_output = work_dir / f"output_tmp_{encoder}.mp4"
+                
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", 
+                    "-f", "concat", "-safe", "0", "-i", str(concat_txt_path),
+                    "-i", str(audio),
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", encoder,
+                ]
+                for k, v in encoder_opts.items():
+                    ffmpeg_cmd.extend([f"-{k}", v])
+                
+                if encoder == "libx264":
+                    ffmpeg_cmd.extend(["-tune", "stillimage"])
+                
+                ffmpeg_cmd.extend([
+                    "-r", str(fps),
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-shortest",
+                    str(temp_output)
+                ])
+                
+                try:
+                    subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    shutil.move(str(temp_output), str(output))
+                    success = True
+                    break
+                except subprocess.CalledProcessError as e:
+                    LOGGER.error(f"FFmpeg {encoder} failed: {e.stderr}")
+                    last_error = e.stderr[-200:] if e.stderr else "Unknown error"
+                    if temp_output.exists():
+                        temp_output.unlink()
             
-            try:
-                subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if success:
                 if progress_callback:
                     progress_callback("Hoàn tất xuất video nhanh!", 1.0, 0)
                 return output
-            except subprocess.CalledProcessError as e:
-                LOGGER.error(f"FFmpeg fast_static failed: {e.stderr}")
-                raise RuntimeError(f"Chế độ xuất nhanh ({encoder}) bị lỗi! Vui lòng thử lại với chế độ 'Cân bằng'. Chi tiết lỗi: {e.stderr[-200:]}")
+            else:
+                raise RuntimeError(f"Tất cả các bộ mã hóa đều thất bại. Lỗi gần nhất: {last_error}")
                 
+        # Non-fast static mode uses MoviePy
+        AudioFileClip, ImageClip, ImageSequenceClip, concatenate_videoclips = _moviepy_imports()
+        
         if progress_callback:
             progress_callback("Đang kết nối các cảnh và áp dụng hiệu ứng chuyển cảnh...", 0.30, None)
         timeline_segments = build_timeline_segments(durations, transition_effect, transition_duration)

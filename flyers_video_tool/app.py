@@ -140,9 +140,9 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 "Chế độ xuất video",
                 options=["fast_static", "balanced", "high_quality"],
                 format_func=lambda x: {
-                    "fast_static": "Nâng tốc độ tối đa, không chuyển cảnh",
-                    "balanced": "Cân bằng (hỗ trợ chuyển cảnh nhẹ)",
-                    "high_quality": "Chất lượng cao nhất, lâu hơn"
+                    "fast_static": "Nhanh nhất (ảnh tĩnh 1 FPS, không chuyển cảnh)",
+                    "balanced": "Cân bằng",
+                    "high_quality": "Đẹp nhất, lâu hơn"
                 }[x],
                 index=0,
                 key=f"{prefix}_export_mode"
@@ -150,7 +150,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         with mode_cols[1]:
             resolution = st.selectbox("Độ phân giải", ["1280x720", "1920x1080", "3840x2160"], index=0 if export_mode_display == "fast_static" else 1, key=f"{prefix}_resolution")
         with mode_cols[2]:
-            default_fps = 2 if export_mode_display == "fast_static" else (10 if export_mode_display == "balanced" else 30)
+            default_fps = 1 if export_mode_display == "fast_static" else (10 if export_mode_display == "balanced" else 30)
             fps = st.selectbox("Số khung hình (FPS)", [1, 2, 5, 10, 30], index=[1, 2, 5, 10, 30].index(default_fps), key=f"{prefix}_fps")
             
         cols = st.columns(4)
@@ -292,6 +292,8 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         )
         width, height = [int(part) for part in resolution.split("x")]
         return {
+            "export_mode": export_mode_display,
+            "fps": fps,
             "resolution": (width, height),
             "background": background,
             "transition_effect": transition_effect,
