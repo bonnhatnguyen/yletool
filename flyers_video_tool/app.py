@@ -312,19 +312,22 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             st.session_state[f"{prefix}_vertical_position"] = "bottom"
             st.session_state[f"{prefix}_horizontal_position"] = "center"
             
-        wm_cols = st.columns(4)
-        with wm_cols[0]:
+        wm_cols1 = st.columns(2)
+        with wm_cols1[0]:
             wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
-        with wm_cols[1]:
+        with wm_cols1[1]:
             wm_image = st.file_uploader("Ảnh đóng dấu", type=["png", "jpg", "jpeg"], key=f"{prefix}_wm_image")
-        with wm_cols[2]:
+            
+        wm_cols2 = st.columns(3)
+        with wm_cols2[0]:
             wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
-        with wm_cols[3]:
+        with wm_cols2[1]:
             wm_size = st.number_input("Kích thước", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
+        with wm_cols2[2]:
             wm_margin = st.number_input("Khoảng cách lề", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
 
         st.write("Vị trí Đóng dấu:")
-        grid_col1, grid_col2, grid_col3 = st.columns([1, 1, 3])
+        grid_col1, grid_col2, grid_col3, _ = st.columns([1, 1, 1, 3])
         with grid_col1:
             if st.button("↖ Trên trái", key=f"{prefix}_tl", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "top"
