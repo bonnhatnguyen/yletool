@@ -20,6 +20,7 @@ from .flyers_video_tool import (
     make_single_page_scene,
     make_vertical_page_scene,
     normalize_watermark_options,
+    normalize_page_map_config,
     ocr_pdf_pages,
     parse_timestamp,
     parse_timestamps_csv,
@@ -28,7 +29,10 @@ from .flyers_video_tool import (
     resolve_page_map_config,
     render_pdf_page,
     transcribe_audio,
+    SUPPORTED_TIMESTAMP_PROVIDERS,
+    detect_timestamps_from_audio_provider,
 )
+
 
 __all__ = [
     "DEFAULT_PAGE_MAP",
@@ -60,4 +64,6 @@ __all__ = [
     "resolve_page_map_config",
     "render_pdf_page",
     "transcribe_audio",
+    "SUPPORTED_TIMESTAMP_PROVIDERS",
+    "detect_timestamps_from_audio_provider",
 ]

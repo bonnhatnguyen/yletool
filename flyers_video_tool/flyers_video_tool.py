@@ -52,6 +52,9 @@ DEFAULT_PAGE_MAP: Dict[int, Dict[str, List[int]]] = {
 
 SUPPORTED_LEVELS = {"starters", "movers", "flyers"}
 SUPPORTED_LAYOUTS = {"single", "side_by_side", "grid", "vertical", "auto"}
+SUPPORTED_TIMESTAMP_PROVIDERS = {"whisper", "gemini", "auto"}
+GEMINI_MODEL = "gemini-3.5-flash"
+
 NUMBER_WORDS = {
     1: "one",
     2: "two",
@@ -861,6 +864,147 @@ def _find_part_start(segments: Sequence[dict], part_number: int, after: float) -
         if _segment_mentions_part(segment, part_number):
             return max(start, after)
     return None
+
+
+def get_gemini_api_key() -> Optional[str]:
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if key:
+        return key
+    try:
+        import streamlit as st
+        key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+        if key:
+            return key
+    except Exception:
+        pass
+    try:
+        import local_secrets
+        key = getattr(local_secrets, "GEMINI_API_KEY", None) or getattr(local_secrets, "GOOGLE_API_KEY", None)
+        if key:
+            return key
+    except ImportError:
+        pass
+    return None
+
+
+def _parse_time_string(time_str: str) -> float:
+    parts = time_str.split(":")
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    elif len(parts) == 2:
+        return int(parts[0]) * 60 + float(parts[1])
+    else:
+        return float(parts[0])
+
+
+def detect_timestamps_with_gemini(
+    audio_path: Path,
+    config: dict,
+    model: str = GEMINI_MODEL,
+    api_key: Optional[str] = None
+) -> Sequence[dict]:
+    api_key = api_key or get_gemini_api_key()
+    if not api_key:
+        raise ValueError("Missing Gemini API key.")
+    
+    from google import genai
+    from google.genai import types
+    
+    client = genai.Client(api_key=api_key)
+    
+    parts_info = []
+    for p in config.get("parts", []):
+        parts_info.append(f"Part {p['part']}: {p.get('title', '')}")
+    parts_list_str = "\n".join(parts_info)
+    
+    prompt = f"""
+You are an expert audio analyst. Analyze this English listening test audio.
+Identify the exact start time of each part listed below.
+
+Parts to identify:
+{parts_list_str}
+
+Return a JSON object matching this schema:
+{{
+  "parts": [
+    {{"part": 1, "start": "00:05", "confidence": 0.95, "evidence": "Speaker says 'Part one'"}}
+  ],
+  "warnings": []
+}}
+Make sure 'start' is a string formatted as MM:SS.
+"""
+    LOGGER.info("Uploading audio to Gemini...")
+    uploaded_file = client.files.upload(file=str(audio_path))
+    try:
+        LOGGER.info("Requesting timestamp generation from %s...", model)
+        response = client.models.generate_content(
+            model=model,
+            contents=[uploaded_file, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+            )
+        )
+        if not response.text:
+            raise ValueError("Gemini returned empty response")
+            
+        data = json.loads(response.text)
+        
+        segments = []
+        for p in data.get("parts", []):
+            try:
+                start_sec = _parse_time_string(p["start"])
+                part_num = int(p["part"])
+                # Generate a fake whisper segment so the downstream logic works unmodified
+                segments.append({
+                    "start": start_sec,
+                    "end": start_sec + 2.0,
+                    "text": f"Part {part_num}"
+                })
+            except Exception as e:
+                LOGGER.warning("Failed to parse Gemini part: %s, error: %s", p, e)
+                
+        return sorted(segments, key=lambda x: x["start"])
+    finally:
+        try:
+            client.files.delete(name=uploaded_file.name)
+        except Exception as e:
+            LOGGER.warning("Failed to delete file from Gemini: %s", e)
+
+
+def detect_timestamps_from_audio_provider(
+    audio_path: Path,
+    page_map_config: dict,
+    provider: str = "auto",
+    whisper_model: str = "small",
+    language: str = "en",
+    gemini_model: str = GEMINI_MODEL,
+) -> Tuple[List[dict], List[str]]:
+    
+    audio_duration = get_audio_duration(audio_path)
+    if audio_duration <= 0:
+        raise ValueError("Audio duration must be greater than zero.")
+        
+    config = normalize_page_map_config(page_map_config)
+    api_key = get_gemini_api_key()
+    
+    if provider == "auto":
+        provider = "gemini" if api_key else "whisper"
+        
+    if provider == "gemini":
+        if not api_key:
+            raise ValueError("Gemini API key is required but not found. Please provide a key or use Whisper local.")
+        segments = detect_timestamps_with_gemini(audio_path, config, model=gemini_model, api_key=api_key)
+    elif provider == "whisper":
+        segments = list(transcribe_audio(audio_path, whisper_model=whisper_model, language=language))
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
+        
+    return detect_part_timestamps(
+        segments,
+        audio_duration=audio_duration,
+        page_map_config=config,
+    )
 
 
 def detect_part_timestamps(

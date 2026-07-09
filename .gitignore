@@ -31,3 +31,9 @@ batch_report.csv
 
 flyers_video_tool/.venv/
 flyers_video_tool/.pytest_cache/
+ 
+# Secrets
+.env
+local_secrets.py
+.streamlit/secrets.toml
+

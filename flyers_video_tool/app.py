@@ -22,6 +22,8 @@ from flyers_video_tool import (
     process_batch,
     read_pairing_csv,
     transcribe_audio,
+    SUPPORTED_TIMESTAMP_PROVIDERS,
+    detect_timestamps_from_audio_provider
 )
 
 
@@ -127,79 +129,93 @@ def default_rows_for_page_map(config: dict):
     return rows
 
 
-def shared_render_options(prefix: str):
-    cols = st.columns(5)
-    with cols[0]:
-        resolution = st.selectbox("Độ phân giải", ["1920x1080", "3840x2160"], key=f"{prefix}_resolution")
-    with cols[1]:
-        background = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_background")
-    with cols[2]:
-        transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], key=f"{prefix}_transition")
-    with cols[3]:
-        transition_duration = st.number_input(
-            "Thời gian chuyển cảnh (giây)", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
-        )
-    with cols[4]:
-        render_scale = st.number_input(
-            "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
-        )
+def shared_render_options(prefix: str, in_expander: bool = True):
+    from contextlib import nullcontext
+    context = st.expander("Cài đặt Video & Đóng dấu (Nâng cao)") if in_expander else nullcontext()
+    with context:
+        cols = st.columns(5)
+        with cols[0]:
+            resolution = st.selectbox("Độ phân giải", ["1920x1080", "3840x2160"], key=f"{prefix}_resolution")
+        with cols[1]:
+            background = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_background")
+        with cols[2]:
+            transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], key=f"{prefix}_transition")
+        with cols[3]:
+            transition_duration = st.number_input(
+                "Thời gian chuyển cảnh (giây)", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
+            )
+        with cols[4]:
+            render_scale = st.number_input(
+                "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
+            )
 
-    wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
-    wm_cols = st.columns(6)
-    with wm_cols[0]:
-        wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
-    with wm_cols[1]:
-        wm_image = st.file_uploader("Ảnh PNG đóng dấu", type=["png"], key=f"{prefix}_wm_image")
-    with wm_cols[2]:
-        wm_position = st.selectbox(
-            "Vị trí",
-            ["dưới-phải", "dưới-trái", "trên-phải", "trên-trái", "giữa"],
-            key=f"{prefix}_wm_position",
+        wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
+        wm_cols = st.columns(6)
+        with wm_cols[0]:
+            wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
+        with wm_cols[1]:
+            wm_image = st.file_uploader("Ảnh PNG đóng dấu", type=["png"], key=f"{prefix}_wm_image")
+        with wm_cols[2]:
+            wm_position = st.selectbox(
+                "Vị trí",
+                ["dưới-phải", "dưới-trái", "trên-phải", "trên-trái", "giữa"],
+                key=f"{prefix}_wm_position",
+            )
+        with wm_cols[3]:
+            wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
+        with wm_cols[4]:
+            wm_size = st.number_input("Kích thước", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
+        with wm_cols[5]:
+            wm_margin = st.number_input("Khoảng cách lề", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
+
+        watermark_image_path = None
+        if wm_image is not None:
+            watermark_image_path = save_upload(wm_image, "watermarks")
+
+        watermark_has_content = bool(wm_text or watermark_image_path)
+        if wm_enabled and not watermark_has_content:
+            st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
+        watermark_position_map = {
+            "dưới-phải": "bottom-right",
+            "dưới-trái": "bottom-left",
+            "trên-phải": "top-right",
+            "trên-trái": "top-left",
+            "giữa": "center",
+        }
+        watermark_options = normalize_watermark_options(
+            enabled=bool(wm_enabled and watermark_has_content),
+            text=wm_text or None,
+            image=watermark_image_path,
+            position=watermark_position_map.get(wm_position, wm_position),
+            opacity=wm_opacity,
+            size=int(wm_size),
+            margin=int(wm_margin),
         )
-    with wm_cols[3]:
-        wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
-    with wm_cols[4]:
-        wm_size = st.number_input("Kích thước", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
-    with wm_cols[5]:
-        wm_margin = st.number_input("Khoảng cách lề", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
-
-    watermark_image_path = None
-    if wm_image is not None:
-        watermark_image_path = save_upload(wm_image, "watermarks")
-
-    watermark_has_content = bool(wm_text or watermark_image_path)
-    if wm_enabled and not watermark_has_content:
-        st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
-    watermark_options = normalize_watermark_options(
-        enabled=bool(wm_enabled and watermark_has_content),
-        text=wm_text or None,
-        image=watermark_image_path,
-        position=wm_position,
-        opacity=wm_opacity,
-        size=int(wm_size),
-        margin=int(wm_margin),
-    )
-    width, height = [int(part) for part in resolution.split("x")]
-    return {
-        "resolution": (width, height),
-        "background": background,
-        "transition_effect": transition_effect,
-        "transition_duration": float(transition_duration),
-        "render_scale": float(render_scale),
-        "watermark_options": watermark_options,
-    }
+        width, height = [int(part) for part in resolution.split("x")]
+        return {
+            "resolution": (width, height),
+            "background": background,
+            "transition_effect": transition_effect,
+            "transition_duration": float(transition_duration),
+            "render_scale": float(render_scale),
+            "watermark_options": watermark_options,
+        }
 
 
 st.title("YLE Listening Video Tool")
 single_tab, batch_tab = st.tabs(["Tạo 1 Video", "Xử lý hàng loạt"])
 
 with single_tab:
-    left, right = st.columns([0.55, 0.45])
-    with left:
+    st.header("Bước 1: Tải lên & Cấu hình")
+    col1, col2 = st.columns(2)
+    with col1:
         pdf_file = st.file_uploader("File PDF bài thi", type=["pdf"], key="single_pdf")
-        audio_file = st.file_uploader("File Audio nghe (MP3)", type=["mp3", "wav", "m4a"], key="single_audio")
         level = st.selectbox("Cấp độ", ["starters", "movers", "flyers"], index=2, key="single_level")
+    with col2:
+        audio_file = st.file_uploader("File Audio nghe (MP3)", type=["mp3", "wav", "m4a"], key="single_audio")
         test_number = st.selectbox("Bài Test số", [1, 2, 3], index=0, key="single_test")
+        
+    with st.expander("Cài đặt nâng cao (Nhận diện)"):
         page_map_upload = st.file_uploader("File cấu hình trang (page_map.json) tuỳ chọn", type=["json"], key="single_page_map")
         range_cols = st.columns(3)
         with range_cols[0]:
@@ -208,9 +224,18 @@ with single_tab:
             ocr_scan_start_page = st.number_input("Trang PDF bắt đầu quét (OCR)", min_value=1, value=1, step=1, key="single_ocr_start")
         with range_cols[2]:
             ocr_scan_end_page = st.number_input("Trang PDF kết thúc quét (OCR)", min_value=1, value=20, step=1, key="single_ocr_end")
-        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", width='stretch')
+        
+        provider = st.selectbox("Công cụ nhận diện thời gian", ["auto", "gemini", "whisper"], index=0, key="single_provider")
+        st.caption("Gemini cần có mạng và sẽ tải audio lên máy chủ Google. Whisper chạy trên máy (cần cấu hình mạnh).")
         whisper_model = st.text_input("Mô hình Whisper", value="small", key="single_model")
-        language = st.text_input("Ngôn ngữ", value="en", key="single_language")
+        language = st.text_input("Ngôn ngữ Whisper", value="en", key="single_language")
+
+    st.header("Bước 2: Tự động nhận diện")
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", type="primary", width='stretch')
+    with col_btn2:
+        detect_clicked = st.button("Tự động nhận diện thời gian", type="primary", width='stretch')
 
     if page_map_upload is not None:
         page_map_path = save_upload(page_map_upload, "page_maps")
@@ -218,7 +243,6 @@ with single_tab:
     else:
         page_map_config = get_preset_page_map(level, test_number)
         if page_map_config.get("parts"):
-            # Auto calculate pdf_offset for default map based on UI input
             calc_offset = page_map_config["parts"][0]["pages"][0] - int(printed_start_page)
             page_map_config["pdf_offset"] = calc_offset
             page_map_config = normalize_page_map_config(page_map_config)
@@ -242,6 +266,10 @@ with single_tab:
                     st.session_state.page_map_df = page_map_to_dataframe(detected_config)
                     st.session_state.page_map_level = level
                     st.session_state.page_map_test = test_number
+                    
+                    # Cập nhật flag Sync
+                    st.session_state.page_map_changed_since_timestamp = True
+                    
                     detected_json = session_dir() / "detected_page_map.json"
                     export_page_map_config(detected_config, detected_json)
                     for warning in warnings:
@@ -262,8 +290,10 @@ with single_tab:
         st.session_state.page_map_level = level
         st.session_state.page_map_test = test_number
 
-    with right:
-        st.subheader("Bản đồ trang PDF (có thể chỉnh sửa)")
+    st.header("Bước 3: Xem lại và Chỉnh sửa")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Bản đồ trang PDF")
         
         current_offset = st.session_state.get("pdf_offset", page_map_config.get("pdf_offset", 0))
         offset_col, recompute_col = st.columns([0.6, 0.4])
@@ -300,6 +330,8 @@ with single_tab:
                 "Khóa trang PDF này": st.column_config.CheckboxColumn("Khóa trang PDF này", default=False),
             },
         )
+        if not st.session_state.page_map_df.equals(edited_page_map_df):
+            st.session_state.page_map_changed_since_timestamp = True
         st.session_state.page_map_df = edited_page_map_df
 
     active_page_map_config = page_map_dataframe_to_config(
@@ -317,72 +349,116 @@ with single_tab:
         st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
         st.session_state.timestamps_detected = False
 
-    controls = st.columns(3)
-    with controls[0]:
-        detect_clicked = st.button("Tự động nhận diện thời gian (Timestamps)", type="primary", width='stretch')
-    with controls[1]:
-        reset_clicked = st.button("Đặt lại bảng", width='stretch')
-    with controls[2]:
-        csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"], label_visibility="collapsed")
+    with right:
+        st.subheader("Bảng thời gian (Timestamps)")
+        
+        controls = st.columns(2)
+        with controls[0]:
+            csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"], label_visibility="collapsed")
+        with controls[1]:
+            st.write("") # spacer
+            reset_clicked = st.button("Đặt lại bảng mẫu", width='stretch')
 
-    if reset_clicked:
-        st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
-        st.session_state.timestamps_detected = False
+        if reset_clicked:
+            st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
+            st.session_state.timestamps_detected = False
+            st.session_state.page_map_changed_since_timestamp = False
 
-    if csv_upload is not None:
-        csv_path = save_upload(csv_upload, "csv")
-        st.session_state.timestamp_df = rows_to_dataframe(parse_timestamps_csv(csv_path))
-        st.session_state.timestamps_detected = True
+        if csv_upload is not None:
+            csv_path = save_upload(csv_upload, "csv")
+            st.session_state.timestamp_df = rows_to_dataframe(parse_timestamps_csv(csv_path))
+            st.session_state.timestamps_detected = True
+            st.session_state.page_map_changed_since_timestamp = False
 
     if detect_clicked:
         if pdf_file is None or audio_file is None:
-            st.warning("Vui lòng tải lên cả file PDF và Audio trước khi nhận diện thời gian.")
+            st.warning("Vui lòng tải lên cả file PDF và Audio ở Bước 1 trước khi nhận diện thời gian.")
         else:
-            audio_path = save_upload(audio_file)
-            with st.status("Đang nhận diện thời gian bằng AI Whisper...", expanded=True) as status:
-                duration = get_audio_duration(audio_path)
-                segments = transcribe_audio(audio_path, whisper_model=whisper_model, language=language)
-                rows, warnings = detect_part_timestamps(
-                    segments,
-                    duration,
-                    test_number=test_number,
-                    page_map_config=active_page_map_config,
-                )
-                detected_csv = session_dir() / "detected_timestamps.csv"
-                export_detected_timestamps(rows, detected_csv)
-                st.session_state.timestamp_df = rows_to_dataframe(rows)
-                st.session_state.timestamps_detected = True
-                for warning in warnings:
-                    st.warning(warning)
-                status.update(label="Nhận diện thời gian hoàn tất", state="complete")
-            with detected_csv.open("rb") as handle:
-                st.download_button("Download detected_timestamps.csv", handle, file_name="detected_timestamps.csv")
+            try:
+                audio_path = save_upload(audio_file)
+                with st.status(f"Đang nhận diện thời gian bằng {provider}...", expanded=True) as status:
+                    rows, warnings = detect_timestamps_from_audio_provider(
+                        audio_path=audio_path,
+                        page_map_config=active_page_map_config,
+                        provider=provider,
+                        whisper_model=whisper_model,
+                        language=language,
+                    )
+                    detected_csv = session_dir() / "detected_timestamps.csv"
+                    export_detected_timestamps(rows, detected_csv)
+                    st.session_state.timestamp_df = rows_to_dataframe(rows)
+                    st.session_state.timestamps_detected = True
+                    st.session_state.page_map_changed_since_timestamp = False
+                    for warning in warnings:
+                        st.warning(warning)
+                    status.update(label="Nhận diện thời gian hoàn tất", state="complete")
+                with detected_csv.open("rb") as handle:
+                    st.download_button("Download detected_timestamps.csv", handle, file_name="detected_timestamps.csv")
+            except Exception as exc:
+                st.error(str(exc))
 
-    st.subheader("Bảng thời gian (Timestamps)")
-    edited_df = st.data_editor(
-        st.session_state.timestamp_df,
-        num_rows="dynamic",
-        width='stretch',
-        column_config={
-            "title": st.column_config.TextColumn("title", required=True),
-            "start": st.column_config.TextColumn("start", help="MM:SS or HH:MM:SS"),
-            "end": st.column_config.TextColumn("end", help="MM:SS or HH:MM:SS"),
-            "pdf_pages": st.column_config.TextColumn("pdf_pages", help="Example: 7,8"),
-            "layout": st.column_config.SelectboxColumn(
-                "layout", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
-            ),
-        },
-    )
-    st.session_state.timestamp_df = edited_df
+    with right:
+        if st.session_state.get("page_map_changed_since_timestamp", False) and st.session_state.get("timestamps_detected", False):
+            st.warning("Page Map đã thay đổi kể từ lần nhận diện thời gian cuối. Các bảng có thể không đồng bộ.")
+            if st.button("Đồng bộ Bảng thời gian theo Page Map mới"):
+                # Reset timestamp matching new parts
+                st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
+                st.session_state.timestamps_detected = False
+                st.session_state.page_map_changed_since_timestamp = False
+                st.rerun()
 
-    if not st.session_state.get("timestamps_detected", False) and csv_upload is None:
-        st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự động nhận diện thời gian' hoặc tải lên file CSV đã duyệt trước khi xuất video.")
+        edited_df = st.data_editor(
+            st.session_state.timestamp_df,
+            num_rows="dynamic",
+            width='stretch',
+            column_config={
+                "title": st.column_config.TextColumn("title", required=True),
+                "start": st.column_config.TextColumn("start", help="MM:SS or HH:MM:SS"),
+                "end": st.column_config.TextColumn("end", help="MM:SS or HH:MM:SS"),
+                "pdf_pages": st.column_config.TextColumn("pdf_pages", help="Example: 7,8"),
+                "layout": st.column_config.SelectboxColumn(
+                    "layout", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
+                ),
+            },
+        )
+        st.session_state.timestamp_df = edited_df
 
-    st.subheader("Xuất Video")
-    single_options = shared_render_options("single")
+        if not st.session_state.get("timestamps_detected", False) and csv_upload is None:
+            st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự động nhận diện thời gian' hoặc tải lên file CSV đã duyệt trước khi xuất video.")
+
+    st.header("Bước 4: Xuất Video")
+    single_options = shared_render_options("single", in_expander=True)
     open_book_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="single_gap")
     output_name = st.text_input("Tên file xuất ra", value=f"{level}_test_{test_number}.mp4")
-    if st.button("Xuất Video", type="primary"):
+    user_reviewed = st.checkbox("Tôi đã kiểm tra thời gian thủ công", value=False)
+    
+    can_export = True
+    export_warnings = []
+    
+    if not st.session_state.get("timestamps_detected", False) and not user_reviewed:
+        can_export = False
+        export_warnings.append("Vui lòng nhận diện thời gian, upload CSV, hoặc tick 'Tôi đã kiểm tra thời gian thủ công'.")
+        
+    rows = dataframe_to_rows(edited_df)
+    
+    for row in rows:
+        if row.get("end_seconds", 0) <= row.get("start_seconds", 0):
+            can_export = False
+            export_warnings.append(f"Phần {row.get('title')} có thời lượng không hợp lệ.")
+            break
+        if not row.get("pdf_pages"):
+            can_export = False
+            export_warnings.append(f"Phần {row.get('title')} bị thiếu cấu hình trang PDF.")
+            break
+
+    if st.session_state.get("page_map_changed_since_timestamp", False) and not user_reviewed:
+        can_export = False
+        export_warnings.append("Page Map đã thay đổi. Vui lòng đồng bộ hoặc tick 'Tôi đã kiểm tra thời gian thủ công'.")
+
+    for warn in export_warnings:
+        st.warning(warn)
+
+    if st.button("Xuất Video", type="primary", disabled=not can_export):
         if pdf_file is None or audio_file is None:
             st.warning("Vui lòng tải lên cả file PDF và Audio trước khi xuất video.")
         else:
@@ -431,23 +507,25 @@ with batch_tab:
     pairing_upload = st.file_uploader("File ghép cặp (pairing.csv) tuỳ chọn", type=["csv"], key="batch_pairing_csv")
     batch_level = st.selectbox("Cấp độ mặc định", ["starters", "movers", "flyers"], index=2, key="batch_level")
     batch_test = st.selectbox("Bài Test mặc định", [1, 2, 3], index=0, key="batch_test")
-    batch_page_map_upload = st.file_uploader("File page_map.json mặc định tuỳ chọn", type=["json"], key="batch_default_page_map")
-    batch_auto_page_map = st.checkbox("Tự động nhận diện trang cho từng PDF", value=True, key="batch_auto_page_map")
-    batch_range_cols = st.columns(3)
-    with batch_range_cols[0]:
-        batch_printed_start = st.number_input("Trang sách/mục lục bắt đầu Phần 1", min_value=1, value=4, step=1, key="batch_printed_start")
-    with batch_range_cols[1]:
-        batch_ocr_start = st.number_input("Trang PDF bắt đầu quét (Batch OCR)", min_value=1, value=1, step=1, key="batch_ocr_start")
-    with batch_range_cols[2]:
-        batch_ocr_end = st.number_input("Trang PDF kết thúc quét (Batch OCR)", min_value=1, value=20, step=1, key="batch_ocr_end")
-    infer_test = st.checkbox("Tự suy luận số Test từ tên file", value=True)
-    csv_only = st.checkbox("Chỉ tạo file CSV (không xuất Video)", value=False, key="batch_csv_only")
-    overwrite = st.checkbox("Ghi đè nếu đã có file MP4", value=False, key="batch_overwrite")
-    batch_model = st.text_input("Mô hình Whisper", value="small", key="batch_model")
-    batch_language = st.text_input("Ngôn ngữ", value="en", key="batch_language")
     output_dir = session_dir() / "batch_outputs"
-    batch_options = shared_render_options("batch")
-    batch_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
+    
+    with st.expander("Cài đặt nâng cao (Batch)"):
+        batch_page_map_upload = st.file_uploader("File page_map.json mặc định tuỳ chọn", type=["json"], key="batch_default_page_map")
+        batch_auto_page_map = st.checkbox("Tự động nhận diện trang cho từng PDF", value=True, key="batch_auto_page_map")
+        batch_range_cols = st.columns(3)
+        with batch_range_cols[0]:
+            batch_printed_start = st.number_input("Trang sách bắt đầu", min_value=1, value=4, step=1, key="batch_printed_start")
+        with batch_range_cols[1]:
+            batch_ocr_start = st.number_input("Trang PDF quét (Batch OCR) từ", min_value=1, value=1, step=1, key="batch_ocr_start")
+        with batch_range_cols[2]:
+            batch_ocr_end = st.number_input("Trang PDF kết thúc quét (Batch OCR) đến", min_value=1, value=20, step=1, key="batch_ocr_end")
+        infer_test = st.checkbox("Tự suy luận số Test từ tên file", value=True)
+        csv_only = st.checkbox("Chỉ tạo file CSV (không xuất Video)", value=False, key="batch_csv_only")
+        overwrite = st.checkbox("Ghi đè nếu đã có file MP4", value=False, key="batch_overwrite")
+        batch_model = st.text_input("Mô hình Whisper", value="small", key="batch_model")
+        batch_language = st.text_input("Ngôn ngữ", value="en", key="batch_language")
+        batch_options = shared_render_options("batch", in_expander=False)
+        batch_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
 
     if st.button("Kiểm tra ghép nối file", width='stretch'):
         try:

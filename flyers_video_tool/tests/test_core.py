@@ -274,7 +274,7 @@ class PageMapConfigTest(unittest.TestCase):
 class AutoPageMapTest(unittest.TestCase):
     def test_builds_dynamic_page_map_from_ocr_headings(self):
         ocr_results = [
-            {"page": 5, "text": "Listening Part 1 Look and listen", "confidence": 91},
+            {"page": 5, "text": "Test 1 Listening Part 1 Look and listen", "confidence": 91},
             {"page": 6, "text": "Part two Read the question", "confidence": 89},
             {"page": 7, "text": "Part 3 Listen and draw lines", "confidence": 93},
             {"page": 8, "text": "More questions for part 3", "confidence": 82},
@@ -293,7 +293,7 @@ class AutoPageMapTest(unittest.TestCase):
 
     def test_auto_page_map_warns_about_missing_part_gap_and_low_confidence(self):
         ocr_results = [
-            {"page": 1, "text": "Part 1", "confidence": 91},
+            {"page": 1, "text": "Test 1 Listening Part 1", "confidence": 91},
             {"page": 5, "text": "Part 3", "confidence": 41},
             {"page": 7, "text": "Transcript", "confidence": 90},
         ]
