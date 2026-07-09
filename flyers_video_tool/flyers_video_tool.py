@@ -2432,13 +2432,12 @@ def generate_preview_scene(
         )
         
         # 2. Apply watermark
-        box = None
         if watermark_options and watermark_options.get("enabled"):
-            box = apply_watermark_to_scene(out_path, watermark_options)
+            apply_watermark_to_scene(out_path, out_path, watermark_options)
             
         with Image.open(out_path) as res_img:
             res_img.load()
             return {
                 "image": res_img,
-                "watermark_box": box
+                "watermark_box": None
             }

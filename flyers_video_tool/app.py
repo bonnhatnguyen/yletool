@@ -405,12 +405,9 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                     
                     st.image(preview_data["image"], use_column_width=True)
                     
-                    if watermark_options["enabled"] and preview_data["watermark_box"]:
-                        box = preview_data["watermark_box"]
-                        st.info(f"**Thông số Render Thực Tế**\n\n"
-                                f"Độ phân giải: {res_w}x{res_h}\n\n"
-                                f"Nền: {bg_mode}\n\n"
-                                f"Watermark box: X={box['x']}, Y={box['y']}, Width={box['width']}, Height={box['height']}")
+                    st.info(f"**Thông số Render Thực Tế**\n\n"
+                            f"Độ phân giải: {res_w}x{res_h}\n\n"
+                            f"Nền: {bg_mode}")
                 except Exception as e:
                     st.error(f"Lỗi khi render xem trước: {e}")
 
