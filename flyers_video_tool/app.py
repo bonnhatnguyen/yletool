@@ -168,7 +168,12 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             )
 
         st.subheader("Cài đặt Đóng dấu (Watermark)")
-        wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
+        from pathlib import Path
+        default_logo_path = Path(__file__).parent / "assets" / "default_logo.jpg"
+        has_default_logo = default_logo_path.exists()
+        wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=has_default_logo, key=f"{prefix}_wm_enabled")
+        if not wm_enabled and has_default_logo:
+            st.info("Watermark đang tắt. Bật mục Đóng dấu nếu muốn logo xuất hiện trong video.")
         
         if f"{prefix}_vertical_position" not in st.session_state:
             st.session_state[f"{prefix}_vertical_position"] = "bottom"
@@ -243,9 +248,8 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 if wm_image is not None:
                     watermark_image_path = save_upload(wm_image, "watermarks")
                 else:
-                    default_img = Path(r"C:\Users\Bao Nguyen\Downloads\YLE logo.jpg")
-                    if default_img.exists():
-                        watermark_image_path = default_img
+                    if default_logo_path.exists():
+                        watermark_image_path = default_logo_path
 
                 if watermark_image_path is not None:
                     import base64
@@ -512,6 +516,13 @@ with single_tab:
     if st.session_state.get("page_map_changed_since_timestamp", False) and not user_reviewed:
         can_export = False
         export_warnings.append("Page Map đã thay đổi. Vui lòng đồng bộ hoặc tick 'Tôi đã kiểm tra thời gian thủ công'.")
+        
+    force_duration = st.checkbox("Tôi hiểu và vẫn muốn xuất video bỏ qua cảnh báo lệch thời gian", value=False)
+    if not force_duration and st.session_state.get("audio_duration"):
+        last_end = rows[-1].get("end_seconds", 0) if rows else 0
+        if abs(st.session_state.audio_duration - last_end) > 5.0:
+            can_export = False
+            export_warnings.append("Tổng thời gian các Part không khớp audio. Vui lòng nhận diện lại thời gian hoặc đánh dấu bỏ qua cảnh báo.")
 
     for warn in export_warnings:
         st.warning(warn)

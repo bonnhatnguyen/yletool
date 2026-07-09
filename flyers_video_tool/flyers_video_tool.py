@@ -1779,6 +1779,8 @@ def create_video(
     watermark_options: Optional[dict] = None,
     progress_callback = None,
     export_mode: str = "fast_static",
+    include_cover_with_part1: bool = True,
+    cover_page: int = 1,
 ) -> Path:
     pdf = Path(pdf_path)
     audio = Path(audio_path)
@@ -1793,6 +1795,12 @@ def create_video(
     if transition_duration < 0:
         raise ValueError("Transition duration cannot be negative.")
     watermark = normalize_watermark_options(**watermark_options) if watermark_options else normalize_watermark_options()
+    if watermark.get("enabled"):
+        wm_type = "text" if watermark.get("text") else ("image" if watermark.get("image") else "none")
+        LOGGER.info(f"Watermark enabled: True | Type: {wm_type} | Path: {watermark.get('image', 'N/A')}")
+    else:
+        LOGGER.info("Watermark enabled: False")
+        
     _check_ffmpeg_available()
     _validate_timestamp_rows(timestamp_rows)
 
@@ -1808,6 +1816,9 @@ def create_video(
         if progress_callback:
             progress_callback("Đang xử lý các trang PDF...", 0.05, None)
         rendered_pages: Dict[int, Path] = {}
+        if include_cover_with_part1:
+            rendered_pages[cover_page] = render_pdf_page(pdf, cover_page, work_dir / "pages", render_scale)
+            
         for row in timestamp_rows:
             for page in row["pdf_pages"]:
                 if page not in rendered_pages:
@@ -1817,32 +1828,56 @@ def create_video(
         if progress_callback:
             progress_callback("Đang tạo các scene (cảnh) tĩnh...", 0.15, None)
         scene_paths: List[Path] = []
+        cumulative_duration = 0.0
         durations: List[float] = []
         for index, row in enumerate(timestamp_rows, start=1):
             pages = row["pdf_pages"]
+            title = row.get("title", "")
+            layout = row.get("layout", "auto")
+            
+            # Logic add cover_page for Part 1
+            if include_cover_with_part1 and "part 1" in title.lower():
+                pages_for_scene = [cover_page]
+                for p in pages:
+                    if p not in pages_for_scene:
+                        pages_for_scene.append(p)
+                pages = pages_for_scene
+                layout = "auto"
+
             raw_scene_path = work_dir / "scenes_raw" / f"scene_{index:02d}.jpg"
             scene_path = work_dir / "scenes" / f"scene_{index:02d}.jpg"
             make_pages_scene(
                 [rendered_pages[page] for page in pages],
                 raw_scene_path,
-                row.get("layout", "auto"),
+                layout,
                 resolution,
                 background,
                 open_book_gap,
             )
             apply_watermark_to_scene(raw_scene_path, scene_path, watermark)
             scene_paths.append(scene_path)
-            durations.append(float(row["end_seconds"]) - float(row["start_seconds"]))
+            
+            # Absolute timeline duration
+            end_sec = float(row["end_seconds"])
+            if index == 1:
+                duration = end_sec
+            else:
+                duration = end_sec - cumulative_duration
+                
+            durations.append(duration)
+            LOGGER.debug(f"{title}: video {cumulative_duration:05.2f} -> {end_sec:05.2f}")
+            cumulative_duration = end_sec
 
         audio_duration = get_audio_duration(audio)
         duration_delta = audio_duration - sum(durations)
         if abs(duration_delta) > 0.01:
-            adjusted_last = durations[-1] + duration_delta
-            if adjusted_last <= 0.05:
-                raise ValueError(
-                    "Timestamp duration differs from audio duration too much to adjust safely. "
-                    "Review detected_timestamps.csv."
+            if abs(duration_delta) > 5.0:
+                raise RuntimeError(
+                    "Tổng thời gian các Part không khớp audio. "
+                    "Hãy bấm Tự nhận diện đề + thời gian hoặc kiểm tra bảng thời gian."
                 )
+            
+            adjusted_last = durations[-1] + duration_delta
             LOGGER.warning(
                 "Adjusting final part duration by %.2fs so video duration matches audio duration.",
                 duration_delta,
@@ -1878,7 +1913,7 @@ def create_video(
             success = False
             for encoder, encoder_opts in available_encoders:
                 if progress_callback:
-                    progress_callback(f"Đang xuất video (Fast Mode - {encoder})...", 0.30, None)
+                    progress_callback(f"Đang xuất video bằng {encoder}...", 0.30, None)
                 
                 temp_output = work_dir / f"output_tmp_{encoder}.mp4"
                 
@@ -1910,6 +1945,8 @@ def create_video(
                     break
                 except subprocess.CalledProcessError as e:
                     LOGGER.error(f"FFmpeg {encoder} failed: {e.stderr}")
+                    if progress_callback:
+                        progress_callback(f"{encoder} không dùng được, đang thử bộ mã hoá khác...", 0.30, None)
                     last_error = e.stderr[-200:] if e.stderr else "Unknown error"
                     if temp_output.exists():
                         temp_output.unlink()
