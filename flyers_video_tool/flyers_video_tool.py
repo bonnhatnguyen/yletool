@@ -81,7 +81,11 @@ NUMBER_WORDS = {
 LOGGER = logging.getLogger("flyers_video_tool")
 SUPPORTED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 SUPPORTED_TRANSITIONS = {"none", "crossfade", "fade", "slide"}
-WATERMARK_POSITIONS = {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
+WATERMARK_POSITIONS = {
+    "top-left", "top-center", "top-right",
+    "center-left", "center", "center-right",
+    "bottom-left", "bottom-center", "bottom-right"
+}
 PAGE_MAP_STOP_PATTERNS = [
     r"\banswer\s+key\b",
     r"\banswers\b",
@@ -866,26 +870,63 @@ def _find_part_start(segments: Sequence[dict], part_number: int, after: float) -
     return None
 
 
-def get_gemini_api_key() -> Optional[str]:
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if key:
-        return key
+def get_gemini_api_keys() -> List[str]:
+    keys = []
+    
+    # 1. GEMINI_API_KEYS (comma separated)
+    env_keys = os.environ.get("GEMINI_API_KEYS")
+    if env_keys:
+        keys.extend([k.strip() for k in env_keys.split(",") if k.strip()])
+        
+    # 2. GEMINI_API_KEY / GOOGLE_API_KEY
+    for env_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+        val = os.environ.get(env_name)
+        if val and val not in keys:
+            keys.append(val)
+            
+    # 3. .streamlit/secrets.toml
     try:
         import streamlit as st
-        key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
-        if key:
-            return key
+        for env_name in ["GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+            val = st.secrets.get(env_name)
+            if val:
+                if isinstance(val, str):
+                    for k in val.split(","):
+                        if k.strip() and k.strip() not in keys:
+                            keys.append(k.strip())
     except Exception:
         pass
+        
+    # 4. local_secrets.py
     try:
         import local_secrets
-        key = getattr(local_secrets, "GEMINI_API_KEY", None) or getattr(local_secrets, "GOOGLE_API_KEY", None)
-        if key:
-            return key
+        for env_name in ["GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+            val = getattr(local_secrets, env_name, None)
+            if val:
+                if isinstance(val, str):
+                    for k in val.split(","):
+                        if k.strip() and k.strip() not in keys:
+                            keys.append(k.strip())
     except ImportError:
         pass
-    return None
+        
+    return keys
 
+def get_gemini_models(override: Optional[str] = None) -> List[str]:
+    if override and override.strip():
+        return [m.strip() for m in override.split(",") if m.strip()]
+    env_models = os.environ.get("GEMINI_MODELS")
+    if env_models:
+        return [m.strip() for m in env_models.split(",") if m.strip()]
+    return [
+        "gemini-2.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-2.5-pro",
+        "gemini-3.1-pro-preview"
+    ]
 
 def _parse_time_string(time_str: str) -> float:
     parts = time_str.split(":")
@@ -896,21 +937,23 @@ def _parse_time_string(time_str: str) -> float:
     else:
         return float(parts[0])
 
-
-def detect_timestamps_with_gemini(
+def detect_timestamps_with_gemini_fallback(
     audio_path: Path,
     config: dict,
-    model: str = GEMINI_MODEL,
-    api_key: Optional[str] = None
+    models_override: str = "",
 ) -> Sequence[dict]:
-    api_key = api_key or get_gemini_api_key()
-    if not api_key:
-        raise ValueError("Missing Gemini API key.")
-    
+    api_keys = get_gemini_api_keys()
+    if not api_keys:
+        raise ValueError("Gemini API key is required but not found. Please provide a key or use Whisper local.")
+        
+    models = get_gemini_models(models_override)
+    if not models:
+        raise ValueError("No Gemini models configured.")
+        
     from google import genai
     from google.genai import types
-    
-    client = genai.Client(api_key=api_key)
+    from google.genai.errors import APIError
+    import time
     
     parts_info = []
     for p in config.get("parts", []):
@@ -933,43 +976,120 @@ Return a JSON object matching this schema:
 }}
 Make sure 'start' is a string formatted as MM:SS.
 """
-    LOGGER.info("Uploading audio to Gemini...")
-    uploaded_file = client.files.upload(file=str(audio_path))
-    try:
-        LOGGER.info("Requesting timestamp generation from %s...", model)
-        response = client.models.generate_content(
-            model=model,
-            contents=[uploaded_file, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            )
-        )
-        if not response.text:
-            raise ValueError("Gemini returned empty response")
-            
-        data = json.loads(response.text)
-        
-        segments = []
-        for p in data.get("parts", []):
-            try:
-                start_sec = _parse_time_string(p["start"])
-                part_num = int(p["part"])
-                # Generate a fake whisper segment so the downstream logic works unmodified
-                segments.append({
-                    "start": start_sec,
-                    "end": start_sec + 2.0,
-                    "text": f"Part {part_num}"
-                })
-            except Exception as e:
-                LOGGER.warning("Failed to parse Gemini part: %s, error: %s", p, e)
-                
-        return sorted(segments, key=lambda x: x["start"])
-    finally:
+    
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "parts": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "part": {"type": "INTEGER"},
+                        "start": {"type": "STRING"},
+                        "confidence": {"type": "NUMBER"},
+                        "evidence": {"type": "STRING"}
+                    },
+                    "required": ["part", "start"]
+                }
+            },
+            "warnings": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            }
+        },
+        "required": ["parts"]
+    }
+    
+    last_error = None
+    
+    for key_idx, api_key in enumerate(api_keys):
+        client = genai.Client(api_key=api_key)
+        LOGGER.info(f"Uploading audio to Gemini using API Key #{key_idx+1}...")
         try:
-            client.files.delete(name=uploaded_file.name)
+            uploaded_file = client.files.upload(file=str(audio_path))
         except Exception as e:
-            LOGGER.warning("Failed to delete file from Gemini: %s", e)
+            LOGGER.warning(f"Failed to upload file with API Key #{key_idx+1}: {e}")
+            if hasattr(e, "code") and e.code in [401, 403]:
+                continue
+            last_error = e
+            continue
+            
+        try:
+            for model in models:
+                retries = 2
+                for attempt in range(retries):
+                    try:
+                        LOGGER.info(f"Requesting timestamp generation from {model} (Attempt {attempt+1}/{retries})...")
+                        response = client.models.generate_content(
+                            model=model,
+                            contents=[uploaded_file, prompt],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=response_schema,
+                                temperature=0.1,
+                            )
+                        )
+                        if not response.text:
+                            raise ValueError("Gemini returned empty response")
+                            
+                        data = json.loads(response.text)
+                        
+                        segments = []
+                        valid_parts = {int(p["part"]) for p in config.get("parts", [])}
+                        
+                        for p in data.get("parts", []):
+                            try:
+                                part_num = int(p["part"])
+                                if part_num not in valid_parts:
+                                    continue
+                                start_sec = _parse_time_string(p["start"])
+                                segments.append({
+                                    "start": start_sec,
+                                    "end": start_sec + 2.0,
+                                    "text": f"Part {part_num}"
+                                })
+                            except Exception as e:
+                                LOGGER.warning("Failed to parse Gemini part: %s, error: %s", p, e)
+                                
+                        if not segments:
+                            raise RuntimeError("Gemini trả về JSON nhưng không có Part nào hợp lệ so với Page Map.")
+                            
+                        LOGGER.info(f"Gemini {model} succeeded.")
+                        return sorted(segments, key=lambda x: x["start"])
+                        
+                    except APIError as e:
+                        LOGGER.warning(f"APIError from {model}: {e}")
+                        last_error = e
+                        if e.code in [401, 403]:
+                            LOGGER.warning(f"API Key #{key_idx+1} is unauthorized. Skipping to next key.")
+                            break
+                        if e.code == 429:
+                            if attempt < retries - 1:
+                                sleep_time = 2 ** (attempt + 1)
+                                LOGGER.info(f"Rate limited. Sleeping {sleep_time}s...")
+                                time.sleep(sleep_time)
+                                continue
+                            else:
+                                break
+                        # For 404/400 (not found/deprecated), just move to next model immediately
+                        break
+                    except Exception as e:
+                        LOGGER.warning(f"Unexpected error from {model}: {e}")
+                        last_error = e
+                        break
+                        
+                # If we broke out due to 401/403, we need to break the model loop too
+                if isinstance(last_error, APIError) and getattr(last_error, "code", None) in [401, 403]:
+                    break
+        finally:
+            try:
+                client.files.delete(name=uploaded_file.name)
+            except Exception as e:
+                LOGGER.warning("Failed to delete file from Gemini: %s", e)
+                
+    raise RuntimeError("Gemini không khả dụng hoặc đã hết quota. Vui lòng dùng Whisper local hoặc kiểm tra API key.")
+
 
 
 def detect_timestamps_from_audio_provider(
@@ -978,7 +1098,7 @@ def detect_timestamps_from_audio_provider(
     provider: str = "auto",
     whisper_model: str = "small",
     language: str = "en",
-    gemini_model: str = GEMINI_MODEL,
+    gemini_models_input: str = "",
 ) -> Tuple[List[dict], List[str]]:
     
     audio_duration = get_audio_duration(audio_path)
@@ -986,26 +1106,36 @@ def detect_timestamps_from_audio_provider(
         raise ValueError("Audio duration must be greater than zero.")
         
     config = normalize_page_map_config(page_map_config)
-    api_key = get_gemini_api_key()
+    api_keys = get_gemini_api_keys()
     
+    original_provider = provider
     if provider == "auto":
-        provider = "gemini" if api_key else "whisper"
+        provider = "gemini" if api_keys else "whisper"
         
+    segments = []
+    
     if provider == "gemini":
-        if not api_key:
-            raise ValueError("Gemini API key is required but not found. Please provide a key or use Whisper local.")
-        segments = detect_timestamps_with_gemini(audio_path, config, model=gemini_model, api_key=api_key)
-    elif provider == "whisper":
+        try:
+            segments = detect_timestamps_with_gemini_fallback(audio_path, config, models_override=gemini_models_input)
+        except RuntimeError as e:
+            if original_provider == "auto":
+                import streamlit as st
+                try:
+                    st.warning("Gemini lỗi hoặc hết quota, đã chuyển sang Whisper local.")
+                except:
+                    LOGGER.warning("Gemini lỗi hoặc hết quota, đã chuyển sang Whisper local.")
+                provider = "whisper"
+            else:
+                raise e
+                
+    if provider == "whisper":
         segments = list(transcribe_audio(audio_path, whisper_model=whisper_model, language=language))
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
         
     return detect_part_timestamps(
         segments,
         audio_duration=audio_duration,
         page_map_config=config,
     )
-
 
 def detect_part_timestamps(
     segments: Sequence[dict],
@@ -1339,15 +1469,22 @@ def make_pages_scene(
 def _watermark_position(canvas_size: Tuple[int, int], mark_size: Tuple[int, int], position: str, margin: int) -> Tuple[int, int]:
     width, height = canvas_size
     mark_width, mark_height = mark_size
-    if position == "top-left":
-        return margin, margin
-    if position == "top-right":
-        return width - mark_width - margin, margin
-    if position == "bottom-left":
-        return margin, height - mark_height - margin
-    if position == "bottom-right":
-        return width - mark_width - margin, height - mark_height - margin
-    return (width - mark_width) // 2, (height - mark_height) // 2
+    
+    if "left" in position:
+        x = margin
+    elif "right" in position:
+        x = width - mark_width - margin
+    else:
+        x = (width - mark_width) // 2
+        
+    if "top" in position:
+        y = margin
+    elif "bottom" in position:
+        y = height - mark_height - margin
+    else:
+        y = (height - mark_height) // 2
+        
+    return x, y
 
 
 def _load_font(size: int):

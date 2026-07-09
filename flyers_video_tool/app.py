@@ -149,24 +149,88 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
             )
 
+        st.subheader("Cài đặt Đóng dấu (Watermark)")
         wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
-        wm_cols = st.columns(6)
+        
+        if f"{prefix}_wm_pos_x" not in st.session_state:
+            st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
+            st.session_state[f"{prefix}_wm_pos_y"] = "right"
+            
+        wm_cols = st.columns(4)
         with wm_cols[0]:
             wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
         with wm_cols[1]:
             wm_image = st.file_uploader("Ảnh PNG đóng dấu", type=["png"], key=f"{prefix}_wm_image")
         with wm_cols[2]:
-            wm_position = st.selectbox(
-                "Vị trí",
-                ["dưới-phải", "dưới-trái", "trên-phải", "trên-trái", "giữa"],
-                key=f"{prefix}_wm_position",
-            )
-        with wm_cols[3]:
             wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
-        with wm_cols[4]:
+        with wm_cols[3]:
             wm_size = st.number_input("Kích thước", min_value=8, max_value=800, value=120, step=4, key=f"{prefix}_wm_size")
-        with wm_cols[5]:
             wm_margin = st.number_input("Khoảng cách lề", min_value=0, max_value=300, value=32, step=4, key=f"{prefix}_wm_margin")
+
+        st.write("Vị trí Đóng dấu:")
+        grid_col1, grid_col2, grid_col3 = st.columns([1, 1, 3])
+        with grid_col1:
+            if st.button("↖ Top-Left", key=f"{prefix}_tl", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "top"
+                st.session_state[f"{prefix}_wm_pos_y"] = "left"
+            if st.button("← Mid-Left", key=f"{prefix}_ml", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "center"
+                st.session_state[f"{prefix}_wm_pos_y"] = "left"
+            if st.button("↙ Bot-Left", key=f"{prefix}_bl", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
+                st.session_state[f"{prefix}_wm_pos_y"] = "left"
+        with grid_col2:
+            if st.button("↑ Top-Center", key=f"{prefix}_tc", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "top"
+                st.session_state[f"{prefix}_wm_pos_y"] = "center"
+            if st.button("· Center", key=f"{prefix}_cc", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "center"
+                st.session_state[f"{prefix}_wm_pos_y"] = "center"
+            if st.button("↓ Bot-Center", key=f"{prefix}_bc", width='stretch'):
+                st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
+                st.session_state[f"{prefix}_wm_pos_y"] = "center"
+        with grid_col3:
+            col3_1, col3_2 = st.columns([1, 2])
+            with col3_1:
+                if st.button("↗ Top-Right", key=f"{prefix}_tr", width='stretch'):
+                    st.session_state[f"{prefix}_wm_pos_x"] = "top"
+                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
+                if st.button("→ Mid-Right", key=f"{prefix}_mr", width='stretch'):
+                    st.session_state[f"{prefix}_wm_pos_x"] = "center"
+                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
+                if st.button("↘ Bot-Right", key=f"{prefix}_br", width='stretch'):
+                    st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
+                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
+            
+            with col3_2:
+                # Visual Preview Box
+                pos_x = st.session_state[f"{prefix}_wm_pos_x"]
+                pos_y = st.session_state[f"{prefix}_wm_pos_y"]
+                
+                flex_items = {
+                    "top": "flex-start",
+                    "center": "center",
+                    "bottom": "flex-end"
+                }
+                flex_justify = {
+                    "left": "flex-start",
+                    "center": "center",
+                    "right": "flex-end"
+                }
+                
+                align_items = flex_items.get(pos_x, "flex-end")
+                justify_content = flex_justify.get(pos_y, "flex-end")
+                
+                preview_text = wm_text if wm_text else "WATERMARK"
+                
+                html_code = f"""
+                <div style="width: 100%; aspect-ratio: 16/9; background-color: #222; border: 2px solid #555; border-radius: 8px; display: flex; align-items: {align_items}; justify-content: {justify_content}; padding: {wm_margin/4}px; box-sizing: border-box;">
+                    <div style="color: rgba(255,255,255,{wm_opacity}); font-size: {max(10, wm_size/10)}px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 5px;">
+                        {preview_text}
+                    </div>
+                </div>
+                """
+                st.markdown(html_code, unsafe_allow_html=True)
 
         watermark_image_path = None
         if wm_image is not None:
@@ -175,18 +239,19 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         watermark_has_content = bool(wm_text or watermark_image_path)
         if wm_enabled and not watermark_has_content:
             st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
-        watermark_position_map = {
-            "dưới-phải": "bottom-right",
-            "dưới-trái": "bottom-left",
-            "trên-phải": "top-right",
-            "trên-trái": "top-left",
-            "giữa": "center",
-        }
+            
+        pos_x = st.session_state[f"{prefix}_wm_pos_x"]
+        pos_y = st.session_state[f"{prefix}_wm_pos_y"]
+        if pos_x == "center" and pos_y == "center":
+            wm_position = "center"
+        else:
+            wm_position = f"{pos_x}-{pos_y}"
+            
         watermark_options = normalize_watermark_options(
             enabled=bool(wm_enabled and watermark_has_content),
             text=wm_text or None,
             image=watermark_image_path,
-            position=watermark_position_map.get(wm_position, wm_position),
+            position=wm_position,
             opacity=wm_opacity,
             size=int(wm_size),
             margin=int(wm_margin),
@@ -200,6 +265,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             "render_scale": float(render_scale),
             "watermark_options": watermark_options,
         }
+
 
 
 st.title("YLE Listening Video Tool")
@@ -227,15 +293,12 @@ with single_tab:
         
         provider = st.selectbox("Công cụ nhận diện thời gian", ["auto", "gemini", "whisper"], index=0, key="single_provider")
         st.caption("Gemini cần có mạng và sẽ tải audio lên máy chủ Google. Whisper chạy trên máy (cần cấu hình mạnh).")
+        gemini_models_input = st.text_input("Danh sách mô hình Gemini (cách nhau bởi dấu phẩy)", value="gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash,gemini-3-flash-preview,gemini-3.5-flash,gemini-2.5-pro,gemini-3.1-pro-preview", key="single_gemini_models")
         whisper_model = st.text_input("Mô hình Whisper", value="small", key="single_model")
         language = st.text_input("Ngôn ngữ Whisper", value="en", key="single_language")
 
     st.header("Bước 2: Tự động nhận diện")
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", type="primary", width='stretch')
-    with col_btn2:
-        detect_clicked = st.button("Tự động nhận diện thời gian", type="primary", width='stretch')
+    detect_clicked = st.button("Tự nhận diện đề + thời gian", type="primary", width='stretch')
 
     if page_map_upload is not None:
         page_map_path = save_upload(page_map_upload, "page_maps")
@@ -247,14 +310,26 @@ with single_tab:
             page_map_config["pdf_offset"] = calc_offset
             page_map_config = normalize_page_map_config(page_map_config)
 
-    if auto_page_map_clicked:
-        if pdf_file is None:
-            st.warning("Vui lòng tải file PDF lên trước khi nhận diện trang.")
+    if (
+        "page_map_df" not in st.session_state
+        or st.session_state.get("page_map_level") != level
+        or st.session_state.get("page_map_test") != test_number
+        or page_map_upload is not None
+    ):
+        st.session_state.page_map_df = page_map_to_dataframe(page_map_config)
+        st.session_state.page_map_level = level
+        st.session_state.page_map_test = test_number
+
+    if detect_clicked:
+        if pdf_file is None or audio_file is None:
+            st.warning("Vui lòng tải lên cả file PDF và Audio ở Bước 1 trước khi tự động nhận diện.")
         else:
             try:
                 pdf_path = save_upload(pdf_file)
-                with st.status("Đang nhận diện trang bằng OCR...", expanded=True) as status:
-                    detected_config, warnings, _ocr_results = auto_detect_page_map_from_pdf(
+                audio_path = save_upload(audio_file)
+                
+                with st.status("1/2 Đang nhận diện bản đồ trang PDF (OCR)...", expanded=True) as status_ocr:
+                    detected_config, warnings_ocr, _ = auto_detect_page_map_from_pdf(
                         pdf_path=pdf_path,
                         output_dir=session_dir() / "ocr",
                         level=level,
@@ -266,45 +341,78 @@ with single_tab:
                     st.session_state.page_map_df = page_map_to_dataframe(detected_config)
                     st.session_state.page_map_level = level
                     st.session_state.page_map_test = test_number
-                    
-                    # Cập nhật flag Sync
-                    st.session_state.page_map_changed_since_timestamp = True
-                    
                     detected_json = session_dir() / "detected_page_map.json"
                     export_page_map_config(detected_config, detected_json)
-                    for warning in warnings:
+                    for warning in warnings_ocr:
                         st.warning(warning)
-                    status.update(label="Nhận diện trang hoàn tất", state="complete")
-                with detected_json.open("rb") as handle:
-                    st.download_button("Download detected_page_map.json", handle, file_name="detected_page_map.json")
+                    status_ocr.update(label="Nhận diện bản đồ trang hoàn tất", state="complete")
+                    
+                with st.status(f"2/2 Đang nhận diện thời gian ({provider})...", expanded=True) as status_time:
+                    rows, warnings_time = detect_timestamps_from_audio_provider(
+                        audio_path=audio_path,
+                        page_map_config=detected_config,
+                        provider=provider,
+                        whisper_model=whisper_model,
+                        language=language,
+                        gemini_models_input=gemini_models_input,
+                    )
+                    detected_csv = session_dir() / "detected_timestamps.csv"
+                    export_detected_timestamps(rows, detected_csv)
+                    st.session_state.timestamp_df = rows_to_dataframe(rows)
+                    st.session_state.timestamps_detected = True
+                    st.session_state.page_map_changed_since_timestamp = False
+                    for warning in warnings_time:
+                        st.warning(warning)
+                    status_time.update(label="Nhận diện thời gian hoàn tất", state="complete")
+                    
             except Exception as exc:
                 st.error(str(exc))
 
-    if (
-        "page_map_df" not in st.session_state
-        or st.session_state.get("page_map_level") != level
-        or st.session_state.get("page_map_test") != test_number
-        or page_map_upload is not None
-    ):
-        st.session_state.page_map_df = page_map_to_dataframe(page_map_config)
-        st.session_state.page_map_level = level
-        st.session_state.page_map_test = test_number
-
     st.header("Bước 3: Xem lại và Chỉnh sửa")
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Bản đồ trang PDF")
-        
+    
+    # Calculate active page map
+    active_page_map_config = page_map_dataframe_to_config(
+        st.session_state.page_map_df, 
+        level, 
+        test_number, 
+        pdf_offset=st.session_state.get("pdf_offset", page_map_config.get("pdf_offset"))
+    )
+
+    if "timestamp_df" not in st.session_state:
+        st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
+        st.session_state.timestamps_detected = False
+
+    st.subheader("Bảng thời gian & Trang (Rút gọn)")
+    
+    # Show merged simplified table
+    merged_df = st.session_state.timestamp_df.copy()
+    
+    # We will map "pdf_pages" into merged_df if we want to show it.
+    # Actually just show timestamp_df and page_map_df in advanced.
+    # For now, let's keep timestamp_df but format it simply.
+    
+    st.data_editor(
+        st.session_state.timestamp_df,
+        num_rows="dynamic",
+        width='stretch',
+        column_config={
+            "title": st.column_config.TextColumn("Part", required=True),
+            "start": st.column_config.TextColumn("Bắt đầu", help="MM:SS"),
+            "end": st.column_config.TextColumn("Kết thúc", help="MM:SS"),
+            "pdf_pages": st.column_config.TextColumn("Trang PDF"),
+            "layout": None, # Hide layout
+        },
+        disabled=True # Basic mode is view only, editing is in advanced or manual upload
+    )
+    
+    if not st.session_state.get("timestamps_detected", False):
+        st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự nhận diện đề + thời gian' trước khi xuất video.")
+
+    with st.expander("Chỉnh sửa dữ liệu thủ công (Nâng cao)"):
+        st.write("Cấu hình Bản đồ trang PDF:")
         current_offset = st.session_state.get("pdf_offset", page_map_config.get("pdf_offset", 0))
-        offset_col, recompute_col = st.columns([0.6, 0.4])
-        with offset_col:
-            new_offset = st.number_input("pdf_offset", value=current_offset, step=1, key="ui_pdf_offset")
-        with recompute_col:
-            st.write("") # spacer
-            st.write("") # spacer
-            recompute_clicked = st.button("Tính lại toàn bộ trang PDF theo Độ lệch (Offset)", width='stretch')
-            
-        if recompute_clicked or new_offset != current_offset:
+        new_offset = st.number_input("Độ lệch (pdf_offset)", value=current_offset, step=1, key="ui_pdf_offset")
+        if new_offset != current_offset:
             st.session_state.pdf_offset = new_offset
             df = st.session_state.page_map_df
             for i, row in df.iterrows():
@@ -319,112 +427,26 @@ with single_tab:
             st.session_state.page_map_df,
             num_rows="dynamic",
             width='stretch',
-            column_config={
-                "Part": st.column_config.NumberColumn("Part", min_value=1, step=1, required=True),
-                "Tiêu đề": st.column_config.TextColumn("Tiêu đề", required=True),
-                "Số trang sách (in)": st.column_config.TextColumn("Số trang sách (in)", help="Example: 4,5"),
-                "Số trang PDF thực tế": st.column_config.TextColumn("Số trang PDF thực tế", help="Example: 7,8"),
-                "Bố cục": st.column_config.SelectboxColumn(
-                    "Bố cục", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
-                ),
-                "Khóa trang PDF này": st.column_config.CheckboxColumn("Khóa trang PDF này", default=False),
-            },
+            key="advanced_page_map_editor"
         )
         if not st.session_state.page_map_df.equals(edited_page_map_df):
             st.session_state.page_map_changed_since_timestamp = True
         st.session_state.page_map_df = edited_page_map_df
-
-    active_page_map_config = page_map_dataframe_to_config(
-        st.session_state.page_map_df, 
-        level, 
-        test_number, 
-        pdf_offset=st.session_state.get("pdf_offset", page_map_config.get("pdf_offset"))
-    )
-
-    for part in active_page_map_config["parts"]:
-        if len(part["pages"]) >= 3:
-            st.warning(f"Suspicious page range in Part {part['part']} ({len(part['pages'])} pages). This likely includes non-Listening pages. Please review.")
-
-    if "timestamp_df" not in st.session_state:
-        st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
-        st.session_state.timestamps_detected = False
-
-    with right:
-        st.subheader("Bảng thời gian (Timestamps)")
         
-        controls = st.columns(2)
-        with controls[0]:
-            csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"], label_visibility="collapsed")
-        with controls[1]:
-            st.write("") # spacer
-            reset_clicked = st.button("Đặt lại bảng mẫu", width='stretch')
-
-        if reset_clicked:
-            st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
-            st.session_state.timestamps_detected = False
-            st.session_state.page_map_changed_since_timestamp = False
-
+        st.write("Bảng thời gian chi tiết:")
+        csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"])
         if csv_upload is not None:
             csv_path = save_upload(csv_upload, "csv")
             st.session_state.timestamp_df = rows_to_dataframe(parse_timestamps_csv(csv_path))
             st.session_state.timestamps_detected = True
-            st.session_state.page_map_changed_since_timestamp = False
-
-    if detect_clicked:
-        if pdf_file is None or audio_file is None:
-            st.warning("Vui lòng tải lên cả file PDF và Audio ở Bước 1 trước khi nhận diện thời gian.")
-        else:
-            try:
-                audio_path = save_upload(audio_file)
-                with st.status(f"Đang nhận diện thời gian bằng {provider}...", expanded=True) as status:
-                    rows, warnings = detect_timestamps_from_audio_provider(
-                        audio_path=audio_path,
-                        page_map_config=active_page_map_config,
-                        provider=provider,
-                        whisper_model=whisper_model,
-                        language=language,
-                    )
-                    detected_csv = session_dir() / "detected_timestamps.csv"
-                    export_detected_timestamps(rows, detected_csv)
-                    st.session_state.timestamp_df = rows_to_dataframe(rows)
-                    st.session_state.timestamps_detected = True
-                    st.session_state.page_map_changed_since_timestamp = False
-                    for warning in warnings:
-                        st.warning(warning)
-                    status.update(label="Nhận diện thời gian hoàn tất", state="complete")
-                with detected_csv.open("rb") as handle:
-                    st.download_button("Download detected_timestamps.csv", handle, file_name="detected_timestamps.csv")
-            except Exception as exc:
-                st.error(str(exc))
-
-    with right:
-        if st.session_state.get("page_map_changed_since_timestamp", False) and st.session_state.get("timestamps_detected", False):
-            st.warning("Page Map đã thay đổi kể từ lần nhận diện thời gian cuối. Các bảng có thể không đồng bộ.")
-            if st.button("Đồng bộ Bảng thời gian theo Page Map mới"):
-                # Reset timestamp matching new parts
-                st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
-                st.session_state.timestamps_detected = False
-                st.session_state.page_map_changed_since_timestamp = False
-                st.rerun()
-
-        edited_df = st.data_editor(
+            
+        edited_timestamp_df = st.data_editor(
             st.session_state.timestamp_df,
             num_rows="dynamic",
             width='stretch',
-            column_config={
-                "title": st.column_config.TextColumn("title", required=True),
-                "start": st.column_config.TextColumn("start", help="MM:SS or HH:MM:SS"),
-                "end": st.column_config.TextColumn("end", help="MM:SS or HH:MM:SS"),
-                "pdf_pages": st.column_config.TextColumn("pdf_pages", help="Example: 7,8"),
-                "layout": st.column_config.SelectboxColumn(
-                    "layout", options=["single", "side_by_side", "grid", "vertical", "auto"], required=True
-                ),
-            },
+            key="advanced_timestamp_editor"
         )
-        st.session_state.timestamp_df = edited_df
-
-        if not st.session_state.get("timestamps_detected", False) and csv_upload is None:
-            st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự động nhận diện thời gian' hoặc tải lên file CSV đã duyệt trước khi xuất video.")
+        st.session_state.timestamp_df = edited_timestamp_df
 
     st.header("Bước 4: Xuất Video")
     single_options = shared_render_options("single", in_expander=True)

@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 from flyers_video_tool.flyers_video_tool import (
     detect_part_timestamps,
-    detect_timestamps_with_gemini,
+    detect_timestamps_with_gemini_fallback,
     normalize_page_map_config,
     normalize_watermark_options
 )
@@ -94,9 +94,13 @@ def test_dynamic_part_count():
     assert rows[-1]["end_seconds"] == 400.0
 
 
-# Test D: Gemini JSON to timestamp rows test
+
+from flyers_video_tool.flyers_video_tool import detect_timestamps_with_gemini_fallback, get_gemini_api_keys
+
 @patch('google.genai.Client')
-def test_gemini_json_to_timestamps(mock_client_class):
+@patch('flyers_video_tool.flyers_video_tool.get_gemini_api_keys')
+def test_gemini_json_to_timestamps(mock_get_keys, mock_client_class):
+    mock_get_keys.return_value = ["fake_key"]
     mock_client = MagicMock()
     mock_client_class.return_value = mock_client
     
@@ -127,7 +131,7 @@ def test_gemini_json_to_timestamps(mock_client_class):
         ]
     }
     
-    segments = detect_timestamps_with_gemini(Path("fake.mp3"), config, api_key="fake_key")
+    segments = detect_timestamps_with_gemini_fallback(Path("fake.mp3"), config)
     assert len(segments) == 5
     assert segments[0]["start"] == 5.0
     assert segments[1]["start"] == 120.0
@@ -141,9 +145,10 @@ def test_gemini_json_to_timestamps(mock_client_class):
     assert rows[4]["end_seconds"] == 600.0
 
 
-# Test E: Gemini bad JSON test
 @patch('google.genai.Client')
-def test_gemini_bad_json(mock_client_class):
+@patch('flyers_video_tool.flyers_video_tool.get_gemini_api_keys')
+def test_gemini_bad_json(mock_get_keys, mock_client_class):
+    mock_get_keys.return_value = ["fake_key"]
     mock_client = MagicMock()
     mock_client_class.return_value = mock_client
     
@@ -158,10 +163,11 @@ def test_gemini_bad_json(mock_client_class):
     config = {"parts": [{"part": 1, "title": "Part 1", "pages": [5]}]}
     
     try:
-        segments = detect_timestamps_with_gemini(Path("fake.mp3"), config, api_key="fake_key")
+        segments = detect_timestamps_with_gemini_fallback(Path("fake.mp3"), config)
         pytest.fail("Should have raised exception on bad JSON")
-    except Exception as e:
-        assert isinstance(e, json.JSONDecodeError)
+    except RuntimeError as e:
+        assert "Gemini không khả dụng" in str(e)
+
 
 
 # Test: Watermark UI mapping test
