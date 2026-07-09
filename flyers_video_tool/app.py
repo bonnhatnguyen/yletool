@@ -430,6 +430,22 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         "use_gpu": use_gpu
     }
 
+
+def get_default_ocr_range(level, test_number):
+    try:
+        from flyers_video_tool.flyers_video_tool import get_preset_page_map
+        preset = get_preset_page_map(level, test_number)
+        all_pages = []
+        if preset and "parts" in preset:
+            for part in preset["parts"]:
+                if "pages" in part:
+                    all_pages.extend(part["pages"])
+        if all_pages:
+            return max(1, min(all_pages) - 2), max(all_pages) + 6
+    except Exception:
+        pass
+    return 1, 20
+
 st.title("YLE Listening Video Tool")
 
 app_mode = st.sidebar.radio("CHẾ ĐỘ HOẠT ĐỘNG", ["Tạo 1 Video", "Xử lý hàng loạt"])
@@ -444,15 +460,35 @@ if app_mode == "Tạo 1 Video":
         audio_file = st.file_uploader("File Audio nghe (MP3)", type=["mp3", "wav", "m4a"], key="single_audio")
         test_number = st.selectbox("Bài Test số", [1, 2, 3], index=0, key="single_test")
         
+    current_pdf_name = pdf_file.name if pdf_file else None
+    current_audio_name = audio_file.name if audio_file else None
+    
+    if (st.session_state.get("prev_level") != level or
+        st.session_state.get("prev_test") != test_number or
+        st.session_state.get("prev_pdf") != current_pdf_name or
+        st.session_state.get("prev_audio") != current_audio_name):
+        
+        keys_to_clear = ["page_map_df", "timestamp_df", "timestamps_detected", "page_map_changed_since_timestamp"]
+        for k in keys_to_clear:
+            if k in st.session_state:
+                del st.session_state[k]
+                
+        st.session_state["prev_level"] = level
+        st.session_state["prev_test"] = test_number
+        st.session_state["prev_pdf"] = current_pdf_name
+        st.session_state["prev_audio"] = current_audio_name
+
+        
     with st.expander("Cài đặt nâng cao (Nhận diện)"):
         page_map_upload = st.file_uploader("File cấu hình trang (page_map.json) tuỳ chọn", type=["json"], key="single_page_map")
         range_cols = st.columns(3)
         with range_cols[0]:
             printed_start_page = st.number_input("Trang sách/mục lục bắt đầu Phần 1", min_value=1, value=4, step=1, key="single_printed_start")
+        default_ocr_start, default_ocr_end = get_default_ocr_range(level, test_number)
         with range_cols[1]:
-            ocr_scan_start_page = st.number_input("Trang PDF bắt đầu quét (OCR)", min_value=1, value=1, step=1, key="single_ocr_start")
+            ocr_scan_start_page = st.number_input("Trang PDF bắt đầu quét (OCR)", min_value=1, value=default_ocr_start, step=1, key=f"single_ocr_start_{level}_{test_number}")
         with range_cols[2]:
-            ocr_scan_end_page = st.number_input("Trang PDF kết thúc quét (OCR)", min_value=1, value=20, step=1, key="single_ocr_end")
+            ocr_scan_end_page = st.number_input("Trang PDF kết thúc quét (OCR)", min_value=1, value=default_ocr_end, step=1, key=f"single_ocr_end_{level}_{test_number}")
         
         provider = st.selectbox("Công cụ nhận diện thời gian", ["auto", "gemini", "whisper"], index=0, key="single_provider")
         st.caption("Gemini cần có mạng và sẽ tải audio lên máy chủ Google. Whisper chạy trên máy (cần cấu hình mạnh).")
@@ -491,7 +527,7 @@ if app_mode == "Tạo 1 Video":
                 pdf_path = save_upload(pdf_file)
                 audio_path = save_upload(audio_file)
                 
-                with st.status("1/2 Đang nhận diện bản đồ trang PDF (OCR)...", expanded=True) as status_ocr:
+                with st.status(f"1/2 Đang quét PDF trang {int(ocr_scan_start_page)}-{int(ocr_scan_end_page)} cho {level.capitalize()} Test {test_number}...", expanded=True) as status_ocr:
                     detected_config, warnings_ocr, _ = auto_detect_page_map_from_pdf(
                         pdf_path=pdf_path,
                         output_dir=session_dir() / "ocr",
@@ -508,6 +544,11 @@ if app_mode == "Tạo 1 Video":
                     export_page_map_config(detected_config, detected_json)
                     for warning in warnings_ocr:
                         st.warning(warning)
+                    
+                    if detected_config and "parts" in detected_config and detected_config["parts"]:
+                        first_page = detected_config["parts"][0]["pages"][0]
+                        st.success(f"Detected Part 1 at PDF page {first_page}")
+                        
                     status_ocr.update(label="Nhận diện bản đồ trang hoàn tất", state="complete")
                     
                 with st.status(f"2/2 Đang nhận diện thời gian ({provider})...", expanded=True) as status_time:

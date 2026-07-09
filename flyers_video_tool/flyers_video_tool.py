@@ -318,6 +318,13 @@ def build_page_map_from_ocr_results(
     
     expected_part_count = get_expected_part_count(level)
     
+    dynamic_stop_patterns = list(PAGE_MAP_STOP_PATTERNS)
+    dynamic_stop_patterns.append(rf"\btest\s+{test_number + 1}\b")
+    
+    def _is_stop(text: str) -> bool:
+        normalized = _normalize_text(text)
+        return any(re.search(pattern, normalized) for pattern in dynamic_stop_patterns)
+    
     # Phase A: Detect Part 1 and other Parts
     part_starts: Dict[int, dict] = {}
     
@@ -328,7 +335,7 @@ def build_page_map_from_ocr_results(
         normalized_heading = _normalize_text(heading_text)
         normalized_text = _normalize_text(text)
         is_contents = _is_contents_page(text)
-        has_stop = _is_page_map_stop_page(text) or _is_page_map_stop_page(heading_text)
+        has_stop = _is_stop(text) or _is_stop(heading_text)
         
         part_number = detect_part_heading_in_text(heading_text) if heading_text else None
         matched_in_heading = part_number is not None
@@ -403,7 +410,7 @@ def build_page_map_from_ocr_results(
         is_contents = _is_contents_page(text)
         
         if not is_contents:
-            if _is_page_map_stop_page(text) or _is_page_map_stop_page(heading_text):
+            if _is_stop(text) or _is_stop(heading_text):
                 stop_page = page_number
                 break
 

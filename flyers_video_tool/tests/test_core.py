@@ -401,3 +401,16 @@ class BackgroundImageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class OcrRangeTest:
+    def test_get_default_ocr_range_flyers_test_2(self):
+        from app import get_default_ocr_range
+        start, end = get_default_ocr_range("flyers", 2)
+        assert start == 21  # min is 23, -2 is 21
+        assert end == 35    # max is 29, +6 is 35
+
+    def test_get_default_ocr_range_flyers_test_3(self):
+        from app import get_default_ocr_range
+        start, end = get_default_ocr_range("flyers", 3)
+        assert start == 39  # min is 41, -2 is 39
+        assert end == 53    # max is 47, +6 is 53
