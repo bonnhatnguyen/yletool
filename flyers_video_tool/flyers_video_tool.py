@@ -1541,7 +1541,12 @@ def apply_watermark_to_scene(
 
     opacity = int(255 * options["opacity"])
     if options["image"]:
-        with Image.open(options["image"]) as wm_raw:
+        try:
+            wm_raw = Image.open(options["image"])
+        except Exception as e:
+            raise RuntimeError(f"File watermark không phải ảnh hợp lệ. Hãy upload PNG/JPG khác. Chi tiết: {e}")
+            
+        with wm_raw:
             watermark = wm_raw.convert("RGBA")
             watermark.thumbnail((options["size"], options["size"]), Image.Resampling.LANCZOS)
             alpha = watermark.getchannel("A").point(lambda value: int(value * options["opacity"]))

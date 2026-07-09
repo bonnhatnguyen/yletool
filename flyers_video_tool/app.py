@@ -169,10 +169,31 @@ def shared_render_options(prefix: str, in_expander: bool = True):
 
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         from pathlib import Path
-        default_logo_path = Path(__file__).parent / "assets" / "default_logo.jpg"
-        has_default_logo = default_logo_path.exists()
+        from PIL import Image, UnidentifiedImageError
+        
+        # Check both jpg and png
+        default_logo_path = None
+        for ext in ["png", "jpg", "jpeg"]:
+            p = Path(__file__).parent / "assets" / f"default_logo.{ext}"
+            if p.exists():
+                default_logo_path = p
+                break
+        
+        has_default_logo = False
+        default_logo_invalid = False
+        if default_logo_path:
+            try:
+                with Image.open(default_logo_path) as img:
+                    img.verify()
+                has_default_logo = True
+            except Exception:
+                default_logo_invalid = True
+                
         wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=has_default_logo, key=f"{prefix}_wm_enabled")
-        if not wm_enabled and has_default_logo:
+        
+        if default_logo_invalid:
+            st.warning("Default logo không hợp lệ. Vui lòng upload watermark khác.")
+        elif not wm_enabled and has_default_logo:
             st.info("Watermark đang tắt. Bật mục Đóng dấu nếu muốn logo xuất hiện trong video.")
         
         if f"{prefix}_vertical_position" not in st.session_state:
@@ -248,7 +269,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 if wm_image is not None:
                     watermark_image_path = save_upload(wm_image, "watermarks")
                 else:
-                    if default_logo_path.exists():
+                    if has_default_logo and default_logo_path:
                         watermark_image_path = default_logo_path
 
                 if watermark_image_path is not None:
