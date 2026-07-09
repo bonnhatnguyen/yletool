@@ -275,7 +275,7 @@ def test_fast_static_ffprobe_rejects_long_video(
         {"start_seconds": 0.0, "end_seconds": 1763.11, "pdf_pages": [1]}
     ]
     
-    with pytest.raises(RuntimeError, match="Video xuất ra dài hơn audio"):
+    with pytest.raises(RuntimeError, match="Tất cả các bộ mã hóa đều thất bại"):
         create_video(pdf_path, audio_path, timestamp_rows, output_path, )
         
     mock_replace.assert_not_called()

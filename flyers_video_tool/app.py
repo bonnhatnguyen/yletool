@@ -408,7 +408,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                         open_book_gap=open_book_gap
                     )
                     
-                    st.image(preview_data["image"], use_column_width=True)
+                    st.image(preview_data["image"], use_container_width=True)
                     
                     st.info(f"**Thông số Render Thực Tế**\n\n"
                             f"Độ phân giải: {res_w}x{res_h}\n\n"

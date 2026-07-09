@@ -2060,35 +2060,36 @@ def create_video(
                 try:
                     subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
                     
-                    # Verify output
-                    output_format_duration = get_format_duration(temp_output)
-                    output_video_duration, output_audio_duration = get_stream_durations(temp_output)
+                    # Verify output using helper
+                    valid, msg = validate_or_repair_output_duration(
+                        temp_output,
+                        audio_duration,
+                        fps,
+                        encoder
+                    )
                     
-                    LOGGER.info(f"output_format_duration = {output_format_duration:.3f}")
-                    LOGGER.info(f"output_audio_duration = {output_audio_duration if output_audio_duration else 'N/A'}")
-                    LOGGER.info(f"output_video_duration = {output_video_duration if output_video_duration else 'N/A'}")
-                    LOGGER.info(f"encoder_used = {encoder}")
-                    
-                    if abs(output_format_duration - audio_duration) > 2.0:
-                        temp_output.unlink(missing_ok=True)
-                        raise ValueError(f"Video xuất ra dài hơn audio. Đã hủy file lỗi. Vui lòng thử lại hoặc gửi log ffprobe.")
-                        
-                    if output_video_duration and abs(output_video_duration - audio_duration) > 5.0:
-                        temp_output.unlink(missing_ok=True)
-                        raise ValueError(f"Video xuất ra dài hơn audio. Đã hủy file lỗi. Vui lòng thử lại hoặc gửi log ffprobe.")
+                    if not valid:
+                        LOGGER.error(f"Duration validation failed for {encoder}:\n{msg}")
+                        last_error = msg
+                        if temp_output.exists():
+                            temp_output.unlink()
+                        continue
                         
                     # Safely replace
                     os.replace(str(temp_output), str(output))
                     success = True
                     break
-                except ValueError as ve:
-                    LOGGER.error(str(ve))
-                    raise RuntimeError(str(ve))
                 except subprocess.CalledProcessError as e:
-                    LOGGER.error(f"FFmpeg {encoder} failed: {e.stderr}")
+                    stderr = e.stderr if e.stderr else "Unknown error"
+                    LOGGER.error(f"FFmpeg {encoder} failed: {stderr}")
+                    
+                    if "Driver does not support the required nvenc API version" in stderr:
+                        LOGGER.warning("Marking h264_nvenc as unsupported for this session.")
+                        UNSUPPORTED_ENCODERS.add("h264_nvenc")
+                        
                     if progress_callback:
                         progress_callback(f"{encoder} không dùng được, đang thử bộ mã hoá khác...", 0.30, None)
-                    last_error = e.stderr[-200:] if e.stderr else "Unknown error"
+                    last_error = stderr[-200:]
                     if temp_output.exists():
                         temp_output.unlink()
             
