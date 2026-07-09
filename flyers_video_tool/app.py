@@ -152,9 +152,9 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         wm_enabled = st.checkbox("Đóng dấu (Watermark)", value=False, key=f"{prefix}_wm_enabled")
         
-        if f"{prefix}_wm_pos_x" not in st.session_state:
-            st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
-            st.session_state[f"{prefix}_wm_pos_y"] = "right"
+        if f"{prefix}_vertical_position" not in st.session_state:
+            st.session_state[f"{prefix}_vertical_position"] = "bottom"
+            st.session_state[f"{prefix}_horizontal_position"] = "right"
             
         wm_cols = st.columns(4)
         with wm_cols[0]:
@@ -170,42 +170,42 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         st.write("Vị trí Đóng dấu:")
         grid_col1, grid_col2, grid_col3 = st.columns([1, 1, 3])
         with grid_col1:
-            if st.button("↖ Top-Left", key=f"{prefix}_tl", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "top"
-                st.session_state[f"{prefix}_wm_pos_y"] = "left"
-            if st.button("← Mid-Left", key=f"{prefix}_ml", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "center"
-                st.session_state[f"{prefix}_wm_pos_y"] = "left"
-            if st.button("↙ Bot-Left", key=f"{prefix}_bl", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
-                st.session_state[f"{prefix}_wm_pos_y"] = "left"
+            if st.button("↖ Trên trái", key=f"{prefix}_tl", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "top"
+                st.session_state[f"{prefix}_horizontal_position"] = "left"
+            if st.button("← Giữa trái", key=f"{prefix}_ml", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "center"
+                st.session_state[f"{prefix}_horizontal_position"] = "left"
+            if st.button("↙ Dưới trái", key=f"{prefix}_bl", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "bottom"
+                st.session_state[f"{prefix}_horizontal_position"] = "left"
         with grid_col2:
-            if st.button("↑ Top-Center", key=f"{prefix}_tc", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "top"
-                st.session_state[f"{prefix}_wm_pos_y"] = "center"
-            if st.button("· Center", key=f"{prefix}_cc", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "center"
-                st.session_state[f"{prefix}_wm_pos_y"] = "center"
-            if st.button("↓ Bot-Center", key=f"{prefix}_bc", width='stretch'):
-                st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
-                st.session_state[f"{prefix}_wm_pos_y"] = "center"
+            if st.button("↑ Trên giữa", key=f"{prefix}_tc", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "top"
+                st.session_state[f"{prefix}_horizontal_position"] = "center"
+            if st.button("· Chính giữa", key=f"{prefix}_cc", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "center"
+                st.session_state[f"{prefix}_horizontal_position"] = "center"
+            if st.button("↓ Dưới giữa", key=f"{prefix}_bc", width='stretch'):
+                st.session_state[f"{prefix}_vertical_position"] = "bottom"
+                st.session_state[f"{prefix}_horizontal_position"] = "center"
         with grid_col3:
             col3_1, col3_2 = st.columns([1, 2])
             with col3_1:
-                if st.button("↗ Top-Right", key=f"{prefix}_tr", width='stretch'):
-                    st.session_state[f"{prefix}_wm_pos_x"] = "top"
-                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
-                if st.button("→ Mid-Right", key=f"{prefix}_mr", width='stretch'):
-                    st.session_state[f"{prefix}_wm_pos_x"] = "center"
-                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
-                if st.button("↘ Bot-Right", key=f"{prefix}_br", width='stretch'):
-                    st.session_state[f"{prefix}_wm_pos_x"] = "bottom"
-                    st.session_state[f"{prefix}_wm_pos_y"] = "right"
+                if st.button("↗ Trên phải", key=f"{prefix}_tr", width='stretch'):
+                    st.session_state[f"{prefix}_vertical_position"] = "top"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
+                if st.button("→ Giữa phải", key=f"{prefix}_mr", width='stretch'):
+                    st.session_state[f"{prefix}_vertical_position"] = "center"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
+                if st.button("↘ Dưới phải", key=f"{prefix}_br", width='stretch'):
+                    st.session_state[f"{prefix}_vertical_position"] = "bottom"
+                    st.session_state[f"{prefix}_horizontal_position"] = "right"
             
             with col3_2:
                 # Visual Preview Box
-                pos_x = st.session_state[f"{prefix}_wm_pos_x"]
-                pos_y = st.session_state[f"{prefix}_wm_pos_y"]
+                vert_pos = st.session_state[f"{prefix}_vertical_position"]
+                horiz_pos = st.session_state[f"{prefix}_horizontal_position"]
                 
                 flex_items = {
                     "top": "flex-start",
@@ -218,8 +218,8 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                     "right": "flex-end"
                 }
                 
-                align_items = flex_items.get(pos_x, "flex-end")
-                justify_content = flex_justify.get(pos_y, "flex-end")
+                align_items = flex_items.get(vert_pos, "flex-end")
+                justify_content = flex_justify.get(horiz_pos, "flex-end")
                 
                 preview_text = wm_text if wm_text else "WATERMARK"
                 
@@ -240,12 +240,12 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         if wm_enabled and not watermark_has_content:
             st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
             
-        pos_x = st.session_state[f"{prefix}_wm_pos_x"]
-        pos_y = st.session_state[f"{prefix}_wm_pos_y"]
-        if pos_x == "center" and pos_y == "center":
+        vert_pos = st.session_state[f"{prefix}_vertical_position"]
+        horiz_pos = st.session_state[f"{prefix}_horizontal_position"]
+        if vert_pos == "center" and horiz_pos == "center":
             wm_position = "center"
         else:
-            wm_position = f"{pos_x}-{pos_y}"
+            wm_position = f"{vert_pos}-{horiz_pos}"
             
         watermark_options = normalize_watermark_options(
             enabled=bool(wm_enabled and watermark_has_content),

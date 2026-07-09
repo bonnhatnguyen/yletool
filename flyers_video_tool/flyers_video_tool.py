@@ -593,6 +593,9 @@ def normalize_watermark_options(
             "text": None,
             "image": None,
             "position": "bottom-right",
+            "x_percent": 0.95,
+            "y_percent": 0.95,
+            "anchor": "bottom-right",
             "opacity": 0.0,
             "size": size,
             "margin": margin,
@@ -609,11 +612,27 @@ def normalize_watermark_options(
         raise ValueError("Watermark size must be greater than zero.")
     if int(margin) < 0:
         raise ValueError("Watermark margin cannot be negative.")
+    mapping = {
+        "top-left": (0.05, 0.05, "top-left"),
+        "top-center": (0.50, 0.05, "top-center"),
+        "top-right": (0.95, 0.05, "top-right"),
+        "center-left": (0.05, 0.50, "center-left"),
+        "center": (0.50, 0.50, "center"),
+        "center-right": (0.95, 0.50, "center-right"),
+        "bottom-left": (0.05, 0.95, "bottom-left"),
+        "bottom-center": (0.50, 0.95, "bottom-center"),
+        "bottom-right": (0.95, 0.95, "bottom-right"),
+    }
+    x_percent, y_percent, anchor = mapping.get(position, (0.95, 0.95, "bottom-right"))
+
     return {
         "enabled": True,
         "text": text,
         "image": str(image) if image else None,
         "position": position,
+        "x_percent": x_percent,
+        "y_percent": y_percent,
+        "anchor": anchor,
         "opacity": float(opacity),
         "size": int(size),
         "margin": int(margin),
