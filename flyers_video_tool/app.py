@@ -68,9 +68,44 @@ def rows_to_dataframe(rows):
     )
 
 
+def clean_timestamp_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    df_clean = df.copy()
+    
+    required_cols = ["title", "start", "end", "pdf_pages", "layout"]
+    for col in required_cols:
+        if col not in df_clean.columns:
+            df_clean[col] = ""
+            
+    for col in required_cols:
+        df_clean[col] = df_clean[col].astype(str).str.strip()
+        df_clean.loc[df_clean[col].isin(["nan", "None", ""]), col] = None
+        
+    df_clean = df_clean.dropna(subset=["title", "start", "end", "pdf_pages"], how="all")
+    
+    for _, row in df_clean.iterrows():
+        title = row.get("title")
+        title_str = title if pd.notna(title) else "không tên"
+            
+        missing = []
+        if pd.isna(row.get("start")):
+            missing.append("start")
+        if pd.isna(row.get("end")):
+            missing.append("end")
+        if pd.isna(row.get("pdf_pages")):
+            missing.append("pdf_pages")
+            
+        if missing:
+            raise ValueError(f"Dòng {title_str} thiếu {'/'.join(missing)}.")
+            
+    df_clean = df_clean.fillna("")
+    return df_clean
+
 def dataframe_to_rows(dataframe: pd.DataFrame):
+    cleaned_df = clean_timestamp_dataframe(dataframe)
+    if cleaned_df.empty:
+        raise ValueError("Bảng thời gian đang trống. Hãy bấm Tự nhận diện đề + thời gian hoặc nhập thời gian thủ công.")
     csv_path = session_dir() / "edited_timestamps.csv"
-    dataframe[["title", "start", "end", "pdf_pages", "layout"]].to_csv(csv_path, index=False)
+    cleaned_df[["title", "start", "end", "pdf_pages", "layout"]].to_csv(csv_path, index=False)
     return parse_timestamps_csv(csv_path)
 
 
@@ -523,17 +558,22 @@ if app_mode == "Tạo 1 Video":
         can_export = False
         export_warnings.append("Vui lòng nhận diện thời gian, upload CSV, hoặc tick 'Tôi đã kiểm tra thời gian thủ công'.")
         
-    rows = dataframe_to_rows(st.session_state.timestamp_df)
-    
-    for row in rows:
-        if row.get("end_seconds", 0) <= row.get("start_seconds", 0):
-            can_export = False
-            export_warnings.append(f"Phần {row.get('title')} có thời lượng không hợp lệ.")
-            break
-        if not row.get("pdf_pages"):
-            can_export = False
-            export_warnings.append(f"Phần {row.get('title')} bị thiếu cấu hình trang PDF.")
-            break
+    try:
+        rows = dataframe_to_rows(st.session_state.timestamp_df)
+        
+        for row in rows:
+            if row.get("end_seconds", 0) <= row.get("start_seconds", 0):
+                can_export = False
+                export_warnings.append(f"Phần {row.get('title')} có thời lượng không hợp lệ.")
+                break
+            if not row.get("pdf_pages"):
+                can_export = False
+                export_warnings.append(f"Phần {row.get('title')} bị thiếu cấu hình trang PDF.")
+                break
+    except ValueError as exc:
+        rows = []
+        can_export = False
+        export_warnings.append(f"Bảng thời gian chưa hợp lệ: {exc}")
 
     if st.session_state.get("page_map_changed_since_timestamp", False) and not user_reviewed:
         can_export = False
@@ -556,7 +596,11 @@ if app_mode == "Tạo 1 Video":
             try:
                 pdf_path = save_upload(pdf_file)
                 audio_path = save_upload(audio_file)
-                rows = dataframe_to_rows(st.session_state.timestamp_df)
+                try:
+                    rows = dataframe_to_rows(st.session_state.timestamp_df)
+                except ValueError as exc:
+                    st.error(f"Bảng thời gian chưa hợp lệ: {exc}")
+                    st.stop()
                 output_path = session_dir() / output_name
                 with st.status("Đang xuất video...", expanded=True) as status:
                     create_video(
