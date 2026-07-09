@@ -1,8 +1,59 @@
 import tempfile
 from pathlib import Path
 
+def render_history_ui():
+    st.header("Lịch sử Video đã xuất")
+    
+    if "export_history" not in st.session_state:
+        st.session_state.export_history = load_export_history()
+        
+    history = st.session_state.export_history
+    if not history:
+        st.info("Chưa có video nào được xuất thành công.")
+        return
+        
+    if st.button("Xóa tất cả video đã xuất"):
+        count = clear_all_exports()
+        st.success(f"Đã xóa {count} video.")
+        st.session_state.export_history = load_export_history()
+        st.rerun()
+        
+    for entry in history:
+        with st.container(border=True):
+            cols = st.columns([1, 2])
+            with cols[0]:
+                if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                    st.video(entry["output_path"])
+                else:
+                    st.warning("File không tồn tại hoặc lỗi xuất.")
+            with cols[1]:
+                st.subheader(entry.get("filename", "Unknown"))
+                st.write(f"**Ngày tạo**: {entry.get('created_at', 'N/A')}")
+                st.write(f"**Độ dài**: Audio {entry.get('audio_duration', 0)}s -> Video {entry.get('output_duration', 0)}s")
+                st.write(f"**Cấu hình**: {entry.get('export_mode')} | {entry.get('fps')} fps | {entry.get('resolution')}")
+                
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                        with open(entry["output_path"], "rb") as f:
+                            st.download_button(
+                                "Download MP4",
+                                f,
+                                file_name=entry["filename"],
+                                mime="video/mp4",
+                                key=f"dl_{entry['export_id']}",
+                                use_container_width=True
+                            )
+                with action_cols[1]:
+                    if st.button("Xóa", key=f"del_{entry['export_id']}", use_container_width=True):
+                        delete_export(entry["export_id"])
+                        st.session_state.export_history = load_export_history()
+                        st.rerun()
+
+
 import pandas as pd
 import streamlit as st
+from history import load_export_history, delete_export, clear_all_exports, generate_unique_filename, register_export
 from typing import Optional
 
 from flyers_video_tool import (
@@ -169,41 +220,144 @@ def shared_render_options(prefix: str, in_expander: bool = True):
     context = st.expander("Cài đặt Video & Đóng dấu (Nâng cao)") if in_expander else nullcontext()
     with context:
         st.subheader("Tuỳ chỉnh Render")
-        mode_cols = st.columns([2, 1, 1])
-        with mode_cols[0]:
-            export_mode_display = st.selectbox(
-                "Chế độ xuất video",
-                options=["fast_static", "balanced", "high_quality"],
-                format_func=lambda x: {
-                    "fast_static": "Nhanh nhất (ảnh tĩnh 1 FPS, không chuyển cảnh)",
-                    "balanced": "Cân bằng",
-                    "high_quality": "Đẹp nhất, lâu hơn"
-                }[x],
-                index=0,
-                key=f"{prefix}_export_mode"
-            )
-        with mode_cols[1]:
-            resolution = st.selectbox("Độ phân giải", ["1280x720", "1920x1080", "3840x2160"], index=0 if export_mode_display == "fast_static" else 1, key=f"{prefix}_resolution")
-        with mode_cols[2]:
-            default_fps = 1 if export_mode_display == "fast_static" else (10 if export_mode_display == "balanced" else 30)
-            fps = st.selectbox("Số khung hình (FPS)", [1, 2, 5, 10, 30], index=[1, 2, 5, 10, 30].index(default_fps), key=f"{prefix}_fps")
-            
-        cols = st.columns(4)
-        with cols[0]:
-            background = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_background")
-        with cols[1]:
-            transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], index=3 if export_mode_display == "fast_static" else 0, key=f"{prefix}_transition")
-        with cols[2]:
-            transition_duration = st.number_input(
-                "Thời gian chuyển cảnh (giây)", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
-            )
-        with cols[3]:
+        
+        # UI controls for background
+        bg_cols = st.columns([1, 1, 1])
+        with bg_cols[0]:
+            resolution = st.selectbox("Độ phân giải", ["1280x720", "1920x1080", "3840x2160"], index=0, key=f"{prefix}_resolution")
+        with bg_cols[1]:
+            bg_mode = st.selectbox("Loại nền", ["Ảnh nền mặc định", "Nền màu trơn", "Ảnh nền tải lên"], key=f"{prefix}_bg_mode")
+        
+        # Handle background modes
+        background_value = "white"
+        if bg_mode == "Nền màu trơn":
+            background_value = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_bg_color")
+        elif bg_mode == "Ảnh nền tải lên":
+            uploaded_bg = st.file_uploader("Upload ảnh nền", type=["png", "jpg", "jpeg"], key=f"{prefix}_bg_upload")
+            if uploaded_bg:
+                # Save it temporarily
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f:
+                    f.write(uploaded_bg.getvalue())
+                    background_value = f.name
+            else:
+                background_value = "white" # Fallback if not uploaded
+        elif bg_mode == "Ảnh nền mặc định":
+            from pathlib import Path
+
+def render_history_ui():
+    st.header("Lịch sử Video đã xuất")
+    
+    if "export_history" not in st.session_state:
+        st.session_state.export_history = load_export_history()
+        
+    history = st.session_state.export_history
+    if not history:
+        st.info("Chưa có video nào được xuất thành công.")
+        return
+        
+    if st.button("Xóa tất cả video đã xuất"):
+        count = clear_all_exports()
+        st.success(f"Đã xóa {count} video.")
+        st.session_state.export_history = load_export_history()
+        st.rerun()
+        
+    for entry in history:
+        with st.container(border=True):
+            cols = st.columns([1, 2])
+            with cols[0]:
+                if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                    st.video(entry["output_path"])
+                else:
+                    st.warning("File không tồn tại hoặc lỗi xuất.")
+            with cols[1]:
+                st.subheader(entry.get("filename", "Unknown"))
+                st.write(f"**Ngày tạo**: {entry.get('created_at', 'N/A')}")
+                st.write(f"**Độ dài**: Audio {entry.get('audio_duration', 0)}s -> Video {entry.get('output_duration', 0)}s")
+                st.write(f"**Cấu hình**: {entry.get('export_mode')} | {entry.get('fps')} fps | {entry.get('resolution')}")
+                
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                        with open(entry["output_path"], "rb") as f:
+                            st.download_button(
+                                "Download MP4",
+                                f,
+                                file_name=entry["filename"],
+                                mime="video/mp4",
+                                key=f"dl_{entry['export_id']}",
+                                use_container_width=True
+                            )
+                with action_cols[1]:
+                    if st.button("Xóa", key=f"del_{entry['export_id']}", use_container_width=True):
+                        delete_export(entry["export_id"])
+                        st.session_state.export_history = load_export_history()
+                        st.rerun()
+
+            default_bg_path = Path(__file__).parent / "assets" / "default_background.jpg"
+            if default_bg_path.exists():
+                background_value = str(default_bg_path)
+            else:
+                st.warning("Không tìm thấy ảnh nền mặc định.")
+                background_value = "white"
+                
+        with bg_cols[2]:
             render_scale = st.number_input(
                 "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
             )
 
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         from pathlib import Path
+
+def render_history_ui():
+    st.header("Lịch sử Video đã xuất")
+    
+    if "export_history" not in st.session_state:
+        st.session_state.export_history = load_export_history()
+        
+    history = st.session_state.export_history
+    if not history:
+        st.info("Chưa có video nào được xuất thành công.")
+        return
+        
+    if st.button("Xóa tất cả video đã xuất"):
+        count = clear_all_exports()
+        st.success(f"Đã xóa {count} video.")
+        st.session_state.export_history = load_export_history()
+        st.rerun()
+        
+    for entry in history:
+        with st.container(border=True):
+            cols = st.columns([1, 2])
+            with cols[0]:
+                if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                    st.video(entry["output_path"])
+                else:
+                    st.warning("File không tồn tại hoặc lỗi xuất.")
+            with cols[1]:
+                st.subheader(entry.get("filename", "Unknown"))
+                st.write(f"**Ngày tạo**: {entry.get('created_at', 'N/A')}")
+                st.write(f"**Độ dài**: Audio {entry.get('audio_duration', 0)}s -> Video {entry.get('output_duration', 0)}s")
+                st.write(f"**Cấu hình**: {entry.get('export_mode')} | {entry.get('fps')} fps | {entry.get('resolution')}")
+                
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
+                        with open(entry["output_path"], "rb") as f:
+                            st.download_button(
+                                "Download MP4",
+                                f,
+                                file_name=entry["filename"],
+                                mime="video/mp4",
+                                key=f"dl_{entry['export_id']}",
+                                use_container_width=True
+                            )
+                with action_cols[1]:
+                    if st.button("Xóa", key=f"del_{entry['export_id']}", use_container_width=True):
+                        delete_export(entry["export_id"])
+                        st.session_state.export_history = load_export_history()
+                        st.rerun()
+
         from PIL import Image, UnidentifiedImageError
         
         # Check both jpg and png
@@ -249,120 +403,95 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         st.write("Vị trí Đóng dấu:")
         grid_col1, grid_col2, grid_col3 = st.columns([1, 1, 3])
         with grid_col1:
-            if st.button("↖ Trên trái", key=f"{prefix}_tl", width='stretch'):
+            if st.button("↖ Trên trái", key=f"{prefix}_tl", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "top"
                 st.session_state[f"{prefix}_horizontal_position"] = "left"
-            if st.button("← Giữa trái", key=f"{prefix}_ml", width='stretch'):
+            if st.button("← Giữa trái", key=f"{prefix}_ml", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "center"
                 st.session_state[f"{prefix}_horizontal_position"] = "left"
-            if st.button("↙ Dưới trái", key=f"{prefix}_bl", width='stretch'):
+            if st.button("↙ Dưới trái", key=f"{prefix}_bl", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "bottom"
                 st.session_state[f"{prefix}_horizontal_position"] = "left"
         with grid_col2:
-            if st.button("↑ Trên giữa", key=f"{prefix}_tc", width='stretch'):
+            if st.button("↑ Trên giữa", key=f"{prefix}_tc", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "top"
                 st.session_state[f"{prefix}_horizontal_position"] = "center"
-            if st.button("· Chính giữa", key=f"{prefix}_cc", width='stretch'):
+            if st.button("· Chính giữa", key=f"{prefix}_cc", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "center"
                 st.session_state[f"{prefix}_horizontal_position"] = "center"
-            if st.button("↓ Dưới giữa", key=f"{prefix}_bc", width='stretch'):
+            if st.button("↓ Dưới giữa", key=f"{prefix}_bc", use_container_width=True):
                 st.session_state[f"{prefix}_vertical_position"] = "bottom"
                 st.session_state[f"{prefix}_horizontal_position"] = "center"
         with grid_col3:
-            col3_1, col3_2 = st.columns([1, 2])
-            with col3_1:
-                if st.button("↗ Trên phải", key=f"{prefix}_tr", width='stretch'):
-                    st.session_state[f"{prefix}_vertical_position"] = "top"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
-                if st.button("→ Giữa phải", key=f"{prefix}_mr", width='stretch'):
-                    st.session_state[f"{prefix}_vertical_position"] = "center"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
-                if st.button("↘ Dưới phải", key=f"{prefix}_br", width='stretch'):
-                    st.session_state[f"{prefix}_vertical_position"] = "bottom"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
-            
-            with col3_2:
-                # Visual Preview Box
-                vert_pos = st.session_state[f"{prefix}_vertical_position"]
-                horiz_pos = st.session_state[f"{prefix}_horizontal_position"]
+            if st.button("↗ Trên phải", key=f"{prefix}_tr", use_container_width=True):
+                st.session_state[f"{prefix}_vertical_position"] = "top"
+                st.session_state[f"{prefix}_horizontal_position"] = "right"
+            if st.button("→ Giữa phải", key=f"{prefix}_mr", use_container_width=True):
+                st.session_state[f"{prefix}_vertical_position"] = "center"
+                st.session_state[f"{prefix}_horizontal_position"] = "right"
+            if st.button("↘ Dưới phải", key=f"{prefix}_br", use_container_width=True):
+                st.session_state[f"{prefix}_vertical_position"] = "bottom"
+                st.session_state[f"{prefix}_horizontal_position"] = "right"
                 
-                flex_items = {
-                    "top": "flex-start",
-                    "center": "center",
-                    "bottom": "flex-end"
-                }
-                flex_justify = {
-                    "left": "flex-start",
-                    "center": "center",
-                    "right": "flex-end"
-                }
-                
-                align_items = flex_items.get(vert_pos, "flex-end")
-                justify_content = flex_justify.get(horiz_pos, "flex-end")
-                
-                watermark_image_path = None
-                if wm_image is not None:
-                    watermark_image_path = save_upload(wm_image, "watermarks")
-                else:
-                    if has_default_logo and default_logo_path:
-                        watermark_image_path = default_logo_path
-
-                if watermark_image_path is not None:
-                    import base64
-                    import mimetypes
-                    with open(watermark_image_path, "rb") as img_f:
-                        img_bytes = img_f.read()
-                    mime_type, _ = mimetypes.guess_type(watermark_image_path)
-                    mime_type = mime_type or "image/png"
-                    b64_img = base64.b64encode(img_bytes).decode("utf-8")
-                    content_html = f'<img src="data:{mime_type};base64,{b64_img}" style="max-height: {max(20, wm_size/2)}px; opacity: {wm_opacity}; object-fit: contain;" />'
-                    if wm_text:
-                        st.info("Bạn đang dùng ảnh làm watermark, chữ đóng dấu sẽ không được hiển thị.")
-                elif wm_text:
-                    content_html = f'<div style="color: rgba(255,255,255,{wm_opacity}); font-size: {max(10, wm_size/10)}px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 5px;">{wm_text}</div>'
-                else:
-                    content_html = f'<div style="color: rgba(255,255,255,0.3); font-size: 12px; padding: 5px;">Chưa có watermark</div>'
-                
-                html_code = f"""
-                <div style="width: 100%; aspect-ratio: 16/9; background-color: #222; border: 2px solid #555; border-radius: 8px; display: flex; align-items: {align_items}; justify-content: {justify_content}; padding: {wm_margin/4}px; box-sizing: border-box; overflow: hidden;">
-                    {content_html}
-                </div>
-                """
-                st.markdown(html_code, unsafe_allow_html=True)
-
-        watermark_has_content = bool(wm_text or watermark_image_path)
-        if wm_enabled and not watermark_has_content:
-            st.warning("Đã bật Watermark. Hãy thêm chữ hoặc tải ảnh PNG lên trước khi xuất video.")
-            
         vert_pos = st.session_state[f"{prefix}_vertical_position"]
         horiz_pos = st.session_state[f"{prefix}_horizontal_position"]
-        if vert_pos == "center" and horiz_pos == "center":
-            wm_position = "center"
-        else:
-            wm_position = f"{vert_pos}-{horiz_pos}"
-            
-        watermark_options = normalize_watermark_options(
-            enabled=bool(wm_enabled and watermark_has_content),
-            text=wm_text or None,
-            image=watermark_image_path,
-            position=wm_position,
-            opacity=wm_opacity,
-            size=int(wm_size),
-            margin=int(wm_margin),
-        )
-        width, height = [int(part) for part in resolution.split("x")]
-        return {
-            "export_mode": export_mode_display,
-            "fps": fps,
-            "resolution": (width, height),
-            "background": background,
-            "transition_effect": transition_effect,
-            "transition_duration": float(transition_duration),
-            "render_scale": float(render_scale),
-            "watermark_options": watermark_options,
+        st.write(f"Vị trí đang chọn: **{vert_pos} - {horiz_pos}**")
+        
+        watermark_has_content = bool(wm_text or wm_image or has_default_logo)
+        
+        watermark_options = {
+            "enabled": bool(wm_enabled and watermark_has_content),
+            "text": wm_text.strip() if wm_text else None,
+            "image": wm_image if wm_image else (default_logo_path if has_default_logo else None),
+            "opacity": wm_opacity,
+            "size": int(wm_size),
+            "margin": int(wm_margin),
+            "position": f"{vert_pos}-{horiz_pos}"
         }
+        
+        # True Preview rendering
+        st.write("---")
+        if st.button("Xem trước đúng như file xuất", key=f"{prefix}_preview_btn", use_container_width=True):
+            with st.spinner("Đang render bản xem trước..."):
+                from flyers_video_tool import generate_preview_scene
+                # Try to get real pdf pages if any available in state
+                pdf_pages = []
+                if "pdf_pages" in st.session_state:
+                    pdf_pages = st.session_state.pdf_pages
+                
+                # Render using the real backend logic
+                res_w, res_h = map(int, resolution.split("x"))
+                try:
+                    preview_data = generate_preview_scene(
+                        pdf_pages=pdf_pages[:2] if pdf_pages else [], # use up to 2 pages
+                        layout="auto",
+                        resolution=(res_w, res_h),
+                        background=background_value,
+                        watermark_options=watermark_options,
+                        open_book_gap=24
+                    )
+                    
+                    st.image(preview_data["image"], use_column_width=True)
+                    
+                    if watermark_options["enabled"] and preview_data["watermark_box"]:
+                        box = preview_data["watermark_box"]
+                        st.info(f"**Thông số Render Thực Tế**\n\n"
+                                f"Độ phân giải: {res_w}x{res_h}\n\n"
+                                f"Nền: {bg_mode}\n\n"
+                                f"Watermark box: X={box['x']}, Y={box['y']}, Width={box['width']}, Height={box['height']}")
+                except Exception as e:
+                    st.error(f"Lỗi khi render xem trước: {e}")
 
-
+    return {
+        "export_mode": "fast_static",
+        "fps": 1,
+        "resolution": resolution,
+        "background": background_value,
+        "transition_effect": "none",
+        "transition_duration": 0.0,
+        "render_scale": render_scale,
+        "watermark_options": watermark_options
+    }
 
 st.title("YLE Listening Video Tool")
 
@@ -601,22 +730,44 @@ if app_mode == "Tạo 1 Video":
                 except ValueError as exc:
                     st.error(f"Bảng thời gian chưa hợp lệ: {exc}")
                     st.stop()
-                output_path = session_dir() / output_name
+                    
+                persistent_output_path = generate_unique_filename(output_name)
+                
                 with st.status("Đang xuất video...", expanded=True) as status:
+                    from flyers_video_tool import get_audio_duration, get_format_duration
                     create_video(
                         pdf_path=pdf_path,
                         audio_path=audio_path,
                         timestamp_rows=rows,
-                        output_path=output_path,
+                        output_path=persistent_output_path,
                         open_book_gap=int(open_book_gap),
                         **single_options,
                     )
+                    
+                    audio_dur = get_audio_duration(audio_path)
+                    video_dur = get_format_duration(persistent_output_path)
+                    
+                    register_export(
+                        output_path=persistent_output_path,
+                        input_pdf_name=pdf_file.name,
+                        input_audio_name=audio_file.name,
+                        audio_duration=audio_dur,
+                        output_duration=video_dur,
+                        level=level,
+                        test_number=test_number,
+                        export_mode=single_options["export_mode"],
+                        fps=single_options["fps"],
+                        resolution=single_options["resolution"]
+                    )
+                    st.session_state.export_history = load_export_history()
                     status.update(label="Xuất video thành công", state="complete")
-                with output_path.open("rb") as handle:
-                    st.download_button("Download MP4", handle, file_name=output_path.name, mime="video/mp4")
-                st.video(str(output_path))
+                
+                st.success(f"Video đã được xuất và lưu thành công tại: {persistent_output_path.name}")
+                st.rerun() # Refresh to show in history
             except Exception as exc:
                 st.error(str(exc))
+                
+    render_history_ui()
 
 elif app_mode == "Xử lý hàng loạt":
     st.subheader("Cấu hình hàng loạt")
@@ -763,3 +914,5 @@ elif app_mode == "Xử lý hàng loạt":
         if report_path.exists():
             with report_path.open("rb") as handle:
                 st.download_button("Download batch_report.csv", handle, file_name="batch_report.csv", mime="text/csv")
+
+    render_history_ui()

@@ -86,7 +86,6 @@ def test_fast_static_creates_concat_file_and_fallbacks(
         audio_path=audio_path,
         output_path=output_path,
         timestamp_rows=timestamp_rows,
-        export_mode="fast_static",
         fps=1,
         transition_effect="crossfade" # should be forced to none
     )
@@ -156,7 +155,7 @@ def test_fast_static_fails_completely(
             audio_path=audio_path,
             output_path=output_path,
             timestamp_rows=timestamp_rows,
-            export_mode="fast_static"
+            
         )
 
 def test_fast_static_duration_guard(tmp_path):
@@ -177,7 +176,7 @@ def test_fast_static_duration_guard(tmp_path):
                 with patch("flyers_video_tool.flyers_video_tool.make_pages_scene"):
                     with patch("flyers_video_tool.flyers_video_tool.apply_watermark_to_scene"):
                         with pytest.raises(RuntimeError, match="Tổng thời gian các Part không khớp audio"):
-                            create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
+                            create_video(pdf_path, audio_path, timestamp_rows, output_path, )
                 
     # Delta <= 5.0 (12.0 - 10.0 = 2.0) -> adjusts
     with patch("flyers_video_tool.flyers_video_tool.get_audio_duration", return_value=12.0):
@@ -191,7 +190,7 @@ def test_fast_static_duration_guard(tmp_path):
                                         with patch("flyers_video_tool.flyers_video_tool.get_format_duration", return_value=12.0):
                                             with patch("flyers_video_tool.flyers_video_tool.get_stream_durations", return_value=(12.0, 12.0)):
                                                 # Should not raise exception
-                                                create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
+                                                create_video(pdf_path, audio_path, timestamp_rows, output_path, )
 
 def test_part1_cover_and_absolute_timeline(tmp_path):
     pdf_path = tmp_path / "test.pdf"
@@ -216,7 +215,7 @@ def test_part1_cover_and_absolute_timeline(tmp_path):
                                     with patch("flyers_video_tool.flyers_video_tool.get_format_duration", return_value=560.0):
                                         with patch("flyers_video_tool.flyers_video_tool.get_stream_durations", return_value=(560.0, 560.0)):
                                             # Call create_video
-                                            create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static", include_cover_with_part1=True, cover_page=1)
+                                            create_video(pdf_path, audio_path, timestamp_rows, output_path, include_cover_with_part1=True, cover_page=1)
                                             
                                             # First call to make_pages_scene should have 2 pages (cover + part1)
                                             assert len(mock_make.call_args_list[0][0][0]) == 2
@@ -270,7 +269,7 @@ def test_fast_static_ffprobe_rejects_long_video(
     ]
     
     with pytest.raises(RuntimeError, match="Video xuất ra dài hơn audio"):
-        create_video(pdf_path, audio_path, timestamp_rows, output_path, export_mode="fast_static")
+        create_video(pdf_path, audio_path, timestamp_rows, output_path, )
         
     mock_replace.assert_not_called()
     assert "-t" in mock_run.call_args_list[0][0][0]

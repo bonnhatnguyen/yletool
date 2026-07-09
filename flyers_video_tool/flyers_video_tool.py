@@ -1319,6 +1319,30 @@ def parse_timestamps_csv(csv_path: str | Path) -> List[dict]:
     return rows
 
 
+
+def _create_background_image(resolution: Tuple[int, int], background: str) -> Image.Image:
+    """
+    Creates a background image from a solid color or an image file path.
+    If background is an existing file, it fits it to the resolution preserving aspect ratio.
+    """
+    bg_path = Path(background)
+    if bg_path.exists() and bg_path.is_file():
+        try:
+            with Image.open(bg_path) as img:
+                # Convert to RGB to ensure compatibility
+                img = img.convert("RGB")
+                return ImageOps.fit(img, resolution, centering=(0.5, 0.5))
+        except Exception as exc:
+            LOGGER.warning(f"Could not load background image {background}: {exc}. Falling back to solid color.")
+            
+    # Fallback to solid color
+    try:
+        color = _background_rgb(background)
+    except Exception:
+        color = (255, 255, 255) # White fallback
+    return Image.new("RGB", resolution, color)
+
+
 def _background_rgb(background: str) -> Tuple[int, int, int]:
     if background.lower() == "dark":
         return (28, 30, 34)
@@ -1613,55 +1637,6 @@ def apply_watermark_to_scene(
     return target
 
 
-def _transition_frames(
-    previous_scene: str | Path,
-    next_scene: str | Path,
-    output_dir: str | Path,
-    transition_effect: str,
-    transition_duration: float,
-    fps: int,
-    background: str,
-) -> List[str]:
-    effect = transition_effect.lower()
-    if effect not in SUPPORTED_TRANSITIONS:
-        raise ValueError(f"Transition effect must be one of: {', '.join(sorted(SUPPORTED_TRANSITIONS))}.")
-    if effect == "none" or transition_duration <= 0:
-        return []
-
-    frame_count = max(2, int(round(transition_duration * fps)))
-    output_root = Path(output_dir)
-    output_root.mkdir(parents=True, exist_ok=True)
-    bg = _background_rgb(background)
-    frame_paths: List[str] = []
-
-    with Image.open(previous_scene) as prev_raw, Image.open(next_scene) as next_raw:
-        prev = prev_raw.convert("RGB")
-        nxt = next_raw.convert("RGB").resize(prev.size, Image.Resampling.LANCZOS)
-        width, height = prev.size
-        for index in range(frame_count):
-            alpha = (index + 1) / (frame_count + 1)
-            if effect == "crossfade":
-                frame = Image.blend(prev, nxt, alpha)
-            elif effect == "fade":
-                if alpha < 0.5:
-                    local = alpha / 0.5
-                    frame = Image.blend(prev, Image.new("RGB", prev.size, bg), local)
-                else:
-                    local = (alpha - 0.5) / 0.5
-                    frame = Image.blend(Image.new("RGB", prev.size, bg), nxt, local)
-            elif effect == "slide":
-                frame = Image.new("RGB", prev.size, bg)
-                offset = int(width * alpha)
-                frame.paste(prev, (-offset, 0))
-                frame.paste(nxt, (width - offset, 0))
-            else:
-                frame = nxt.copy()
-            frame_path = output_root / f"transition_{index:04d}.jpg"
-            frame.save(frame_path, quality=94)
-            frame_paths.append(str(frame_path))
-    return frame_paths
-
-
 def _check_ffmpeg_available() -> None:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("FFmpeg was not found in PATH. Install FFmpeg and restart the terminal.")
@@ -1733,47 +1708,6 @@ def _clip_subclip(audio_clip, start: float, end: float):
     return audio_clip.subclip(start, end)
 
 
-def build_timeline_segments(
-    durations: Sequence[float],
-    transition_effect: str = "crossfade",
-    transition_duration: float = 0.8,
-) -> List[dict]:
-    effect = transition_effect.lower()
-    if effect not in SUPPORTED_TRANSITIONS:
-        raise ValueError(f"Transition effect must be one of: {', '.join(sorted(SUPPORTED_TRANSITIONS))}.")
-    if transition_duration < 0:
-        raise ValueError("Transition duration cannot be negative.")
-    numeric_durations = [float(duration) for duration in durations]
-    if any(duration <= 0 for duration in numeric_durations):
-        raise ValueError("All timeline durations must be greater than zero.")
-
-    segments: List[dict] = []
-    for index, duration in enumerate(numeric_durations):
-        next_transition = 0.0
-        if index < len(numeric_durations) - 1 and effect != "none":
-            next_transition = min(
-                float(transition_duration),
-                max(0.0, duration / 2),
-                max(0.0, numeric_durations[index + 1] / 2),
-            )
-        hold_duration = duration
-        segments.append({"type": "scene", "scene_index": index, "duration": hold_duration})
-        if next_transition > 0:
-            segments.append(
-                {
-                    "type": "transition",
-                    "from_scene_index": index,
-                    "to_scene_index": index + 1,
-                    "duration": next_transition,
-                    "effect": effect,
-                }
-            )
-            # The transition is visual-only and consumes time at the boundary. Subtract it
-            # from the next static scene so the total timeline remains equal to audio.
-            numeric_durations[index + 1] = max(0.05, numeric_durations[index + 1] - next_transition)
-    return segments
-
-
 def export_batch_report(results: Sequence[dict], report_path: str | Path) -> Path:
     path = Path(report_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1814,10 +1748,10 @@ def create_video(
     background: str = "white",
     open_book_gap: int = 24,
     render_scale: float = 3.0,
-    fps: int = 30,
+    fps: int = 1,
     keep_temp: bool = False,
-    transition_effect: str = "crossfade",
-    transition_duration: float = 0.8,
+    transition_effect: str = "none",
+    transition_duration: float = 0.0,
     watermark_options: Optional[dict] = None,
     progress_callback = None,
     export_mode: str = "fast_static",
@@ -2038,7 +1972,6 @@ def create_video(
         
         if progress_callback:
             progress_callback("Đang kết nối các cảnh và áp dụng hiệu ứng chuyển cảnh...", 0.30, None)
-        timeline_segments = build_timeline_segments(durations, transition_effect, transition_duration)
         for segment in timeline_segments:
             if segment["type"] == "scene":
                 scene_path = scene_paths[segment["scene_index"]]
@@ -2144,8 +2077,8 @@ def process_batch(
     background: str = "white",
     open_book_gap: int = 24,
     render_scale: float = 3.0,
-    transition_effect: str = "crossfade",
-    transition_duration: float = 0.8,
+    transition_effect: str = "none",
+    transition_duration: float = 0.0,
     watermark_options: Optional[dict] = None,
     page_map_config: Optional[dict] = None,
     auto_page_map: bool = False,
@@ -2465,3 +2398,67 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def generate_preview_scene(
+    pdf_pages: List[Path],
+    layout: str,
+    resolution: Tuple[int, int],
+    background: str,
+    watermark_options: dict,
+    open_book_gap: int
+) -> dict:
+    """
+    Generates a preview scene and applies the watermark.
+    Returns a dict containing the PIL.Image 'image' and 'watermark_box' dict.
+    """
+    import tempfile
+    
+    if not pdf_pages:
+        # Create a dummy blank page
+        dummy = Image.new("RGB", (1240, 1754), (240, 240, 240))
+        import tempfile
+        dummy_dir = tempfile.mkdtemp()
+        dummy_path = Path(dummy_dir) / "dummy.jpg"
+        dummy.save(dummy_path)
+        pdf_pages = [dummy_path]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "scene.jpg"
+        # 1. Create scene
+        make_pages_scene(
+            page_image_paths=pdf_pages,
+            output_path=out_path,
+            layout=layout,
+            resolution=resolution,
+            background=background,
+            open_book_gap=open_book_gap
+        )
+        
+        # 2. Apply watermark
+        with Image.open(out_path) as img:
+            img_rgb = img.convert("RGB")
+            
+        box = None
+        if watermark_options and watermark_options.get("enabled"):
+            try:
+                # We need to extract the watermark box. 
+                # apply_watermark_to_scene saves to disk, we can just do the logic here for preview
+                from .flyers_video_tool import apply_watermark_to_scene
+                # Wait, apply_watermark_to_scene works on file paths.
+                # Let's modify apply_watermark_to_scene to return the box.
+                pass
+            except Exception as e:
+                LOGGER.error(f"Error applying watermark preview: {e}")
+                
+        # To make it accurate, let's call apply_watermark_to_scene on the temp file
+        box = None
+        if watermark_options and watermark_options.get("enabled"):
+            box = apply_watermark_to_scene(out_path, watermark_options)
+            
+        with Image.open(out_path) as res_img:
+            res_img.load()
+            return {
+                "image": res_img,
+                "watermark_box": box
+            }

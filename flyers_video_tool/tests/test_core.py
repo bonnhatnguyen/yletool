@@ -6,7 +6,6 @@ from pathlib import Path
 
 from flyers_video_tool import (
     DEFAULT_PAGE_MAP,
-    build_timeline_segments,
     build_page_map_from_ocr_results,
     detect_part_timestamps,
     discover_batch_pairs,
@@ -350,19 +349,6 @@ class BatchReportTest(unittest.TestCase):
         self.assertEqual(rows[0]["input_pdf"], str(Path(tmp) / "a.pdf"))
         self.assertEqual(rows[0]["status"], "failed")
         self.assertEqual(rows[0]["error_message"], "bad timestamp")
-
-
-class TimelineTest(unittest.TestCase):
-    def test_transition_timeline_keeps_total_duration(self):
-        durations = [100.0, 80.0, 60.0]
-        segments = build_timeline_segments(durations, transition_effect="crossfade", transition_duration=0.8)
-
-        total = sum(segment["duration"] for segment in segments)
-        transitions = [segment for segment in segments if segment["type"] == "transition"]
-
-        self.assertAlmostEqual(total, sum(durations), places=6)
-        self.assertEqual(len(transitions), 2)
-        self.assertTrue(all(segment["duration"] == 0.8 for segment in transitions))
 
 
 class WatermarkOptionsTest(unittest.TestCase):
