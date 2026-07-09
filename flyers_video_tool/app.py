@@ -1,6 +1,60 @@
 import tempfile
 from pathlib import Path
 
+import pandas as pd
+import streamlit as st
+try:
+    from history import load_export_history, delete_export, clear_all_exports, generate_unique_filename, register_export
+except ImportError:
+    from flyers_video_tool.history import load_export_history, delete_export, clear_all_exports, generate_unique_filename, register_export
+
+try:
+    from flyers_video_tool import (
+        auto_detect_page_map_from_pdf,
+        create_video,
+        detect_part_timestamps,
+        discover_batch_pairs,
+        export_page_map_config,
+        export_detected_timestamps,
+        get_preset_page_map,
+        get_audio_duration,
+        infer_test_number_from_name,
+        load_page_map_config,
+        normalize_page_map_config,
+        normalize_watermark_options,
+        parse_timestamps_csv,
+        process_batch,
+        read_pairing_csv,
+        transcribe_audio,
+        SUPPORTED_TIMESTAMP_PROVIDERS,
+        detect_timestamps_from_audio_provider
+    )
+except ImportError:
+    from flyers_video_tool.flyers_video_tool import (
+        auto_detect_page_map_from_pdf,
+        create_video,
+        detect_part_timestamps,
+        discover_batch_pairs,
+        export_page_map_config,
+        export_detected_timestamps,
+        get_preset_page_map,
+        get_audio_duration,
+        infer_test_number_from_name,
+        load_page_map_config,
+        normalize_page_map_config,
+        normalize_watermark_options,
+        parse_timestamps_csv,
+        process_batch,
+        read_pairing_csv,
+        transcribe_audio,
+        SUPPORTED_TIMESTAMP_PROVIDERS,
+        detect_timestamps_from_audio_provider
+    )
+
+
+st.set_page_config(page_title="YLE Listening Video Tool", layout="wide")
+
+
 def render_history_ui():
     st.header("Lịch sử Video đã xuất")
     
@@ -51,34 +105,7 @@ def render_history_ui():
                         st.rerun()
 
 
-import pandas as pd
-import streamlit as st
-from history import load_export_history, delete_export, clear_all_exports, generate_unique_filename, register_export
-from typing import Optional
 
-from flyers_video_tool import (
-    auto_detect_page_map_from_pdf,
-    create_video,
-    detect_part_timestamps,
-    discover_batch_pairs,
-    export_page_map_config,
-    export_detected_timestamps,
-    get_preset_page_map,
-    get_audio_duration,
-    infer_test_number_from_name,
-    load_page_map_config,
-    normalize_page_map_config,
-    normalize_watermark_options,
-    parse_timestamps_csv,
-    process_batch,
-    read_pairing_csv,
-    transcribe_audio,
-    SUPPORTED_TIMESTAMP_PROVIDERS,
-    detect_timestamps_from_audio_provider
-)
-
-
-st.set_page_config(page_title="YLE Listening Video Tool", layout="wide")
 
 
 def session_dir() -> Path:
@@ -244,56 +271,6 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 background_value = "white" # Fallback if not uploaded
         elif bg_mode == "Ảnh nền mặc định":
             from pathlib import Path
-
-def render_history_ui():
-    st.header("Lịch sử Video đã xuất")
-    
-    if "export_history" not in st.session_state:
-        st.session_state.export_history = load_export_history()
-        
-    history = st.session_state.export_history
-    if not history:
-        st.info("Chưa có video nào được xuất thành công.")
-        return
-        
-    if st.button("Xóa tất cả video đã xuất"):
-        count = clear_all_exports()
-        st.success(f"Đã xóa {count} video.")
-        st.session_state.export_history = load_export_history()
-        st.rerun()
-        
-    for entry in history:
-        with st.container(border=True):
-            cols = st.columns([1, 2])
-            with cols[0]:
-                if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
-                    st.video(entry["output_path"])
-                else:
-                    st.warning("File không tồn tại hoặc lỗi xuất.")
-            with cols[1]:
-                st.subheader(entry.get("filename", "Unknown"))
-                st.write(f"**Ngày tạo**: {entry.get('created_at', 'N/A')}")
-                st.write(f"**Độ dài**: Audio {entry.get('audio_duration', 0)}s -> Video {entry.get('output_duration', 0)}s")
-                st.write(f"**Cấu hình**: {entry.get('export_mode')} | {entry.get('fps')} fps | {entry.get('resolution')}")
-                
-                action_cols = st.columns(2)
-                with action_cols[0]:
-                    if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
-                        with open(entry["output_path"], "rb") as f:
-                            st.download_button(
-                                "Download MP4",
-                                f,
-                                file_name=entry["filename"],
-                                mime="video/mp4",
-                                key=f"dl_{entry['export_id']}",
-                                use_container_width=True
-                            )
-                with action_cols[1]:
-                    if st.button("Xóa", key=f"del_{entry['export_id']}", use_container_width=True):
-                        delete_export(entry["export_id"])
-                        st.session_state.export_history = load_export_history()
-                        st.rerun()
-
             default_bg_path = Path(__file__).parent / "assets" / "default_background.jpg"
             if default_bg_path.exists():
                 background_value = str(default_bg_path)
@@ -308,56 +285,6 @@ def render_history_ui():
 
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         from pathlib import Path
-
-def render_history_ui():
-    st.header("Lịch sử Video đã xuất")
-    
-    if "export_history" not in st.session_state:
-        st.session_state.export_history = load_export_history()
-        
-    history = st.session_state.export_history
-    if not history:
-        st.info("Chưa có video nào được xuất thành công.")
-        return
-        
-    if st.button("Xóa tất cả video đã xuất"):
-        count = clear_all_exports()
-        st.success(f"Đã xóa {count} video.")
-        st.session_state.export_history = load_export_history()
-        st.rerun()
-        
-    for entry in history:
-        with st.container(border=True):
-            cols = st.columns([1, 2])
-            with cols[0]:
-                if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
-                    st.video(entry["output_path"])
-                else:
-                    st.warning("File không tồn tại hoặc lỗi xuất.")
-            with cols[1]:
-                st.subheader(entry.get("filename", "Unknown"))
-                st.write(f"**Ngày tạo**: {entry.get('created_at', 'N/A')}")
-                st.write(f"**Độ dài**: Audio {entry.get('audio_duration', 0)}s -> Video {entry.get('output_duration', 0)}s")
-                st.write(f"**Cấu hình**: {entry.get('export_mode')} | {entry.get('fps')} fps | {entry.get('resolution')}")
-                
-                action_cols = st.columns(2)
-                with action_cols[0]:
-                    if entry.get("status") == "success" and Path(entry.get("output_path", "")).exists():
-                        with open(entry["output_path"], "rb") as f:
-                            st.download_button(
-                                "Download MP4",
-                                f,
-                                file_name=entry["filename"],
-                                mime="video/mp4",
-                                key=f"dl_{entry['export_id']}",
-                                use_container_width=True
-                            )
-                with action_cols[1]:
-                    if st.button("Xóa", key=f"del_{entry['export_id']}", use_container_width=True):
-                        delete_export(entry["export_id"])
-                        st.session_state.export_history = load_export_history()
-                        st.rerun()
-
         from PIL import Image, UnidentifiedImageError
         
         # Check both jpg and png
