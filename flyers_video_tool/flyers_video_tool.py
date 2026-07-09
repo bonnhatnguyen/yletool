@@ -2432,22 +2432,6 @@ def generate_preview_scene(
         )
         
         # 2. Apply watermark
-        with Image.open(out_path) as img:
-            img_rgb = img.convert("RGB")
-            
-        box = None
-        if watermark_options and watermark_options.get("enabled"):
-            try:
-                # We need to extract the watermark box. 
-                # apply_watermark_to_scene saves to disk, we can just do the logic here for preview
-                from .flyers_video_tool import apply_watermark_to_scene
-                # Wait, apply_watermark_to_scene works on file paths.
-                # Let's modify apply_watermark_to_scene to return the box.
-                pass
-            except Exception as e:
-                LOGGER.error(f"Error applying watermark preview: {e}")
-                
-        # To make it accurate, let's call apply_watermark_to_scene on the temp file
         box = None
         if watermark_options and watermark_options.get("enabled"):
             box = apply_watermark_to_scene(out_path, watermark_options)
