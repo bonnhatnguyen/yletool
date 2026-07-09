@@ -707,8 +707,6 @@ def validate_or_repair_output_duration(
     fps: int,
     encoder: str,
 ) -> tuple[bool, str]:
-    from flyers_video_tool.flyers_video_tool import get_format_duration, get_stream_durations
-    
     output_format_duration = get_format_duration(temp_output)
     output_video_duration, output_audio_duration = get_stream_durations(temp_output)
     
