@@ -1320,7 +1320,20 @@ def parse_timestamps_csv(csv_path: str | Path) -> List[dict]:
 
 
 
-def _create_background_image(resolution: Tuple[int, int], background: str) -> Image.Image:
+def normalize_resolution(resolution: Union[str, Tuple[int, int], List[int]]) -> Tuple[int, int]:
+    if isinstance(resolution, str):
+        parts = resolution.lower().split("x")
+        if len(parts) == 2:
+            return int(parts[0].strip()), int(parts[1].strip())
+        raise ValueError(f"Invalid resolution string: {resolution}. Use '1280x720'.")
+    try:
+        w, h = resolution
+        return int(w), int(h)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid resolution. Use (width, height) or '1280x720'. Got: {resolution}")
+
+
+def _create_background_image(resolution: Union[str, Tuple[int, int]], background: str) -> Image.Image:
     """
     Creates a background image from a solid color or an image file path.
     If background is an existing file, it fits it to the resolution preserving aspect ratio.
@@ -1395,7 +1408,7 @@ def make_single_page_scene(
     background: str = "white",
     margin_ratio: float = 0.035,
 ) -> Path:
-    width, height = resolution
+    width, height = normalize_resolution(resolution)
     canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     with Image.open(page_image_path) as image:
@@ -1418,7 +1431,7 @@ def make_double_page_scene(
     open_book_gap: int = 24,
     margin_ratio: float = 0.035,
 ) -> Path:
-    width, height = resolution
+    width, height = normalize_resolution(resolution)
     canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     available_width = width - margin * 2 - open_book_gap
@@ -1456,7 +1469,7 @@ def make_grid_page_scene(
 ) -> Path:
     if not page_image_paths:
         raise ValueError("Grid scene requires at least one page image.")
-    width, height = resolution
+    width, height = normalize_resolution(resolution)
     canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     count = len(page_image_paths)
@@ -1492,7 +1505,7 @@ def make_vertical_page_scene(
 ) -> Path:
     if not page_image_paths:
         raise ValueError("Vertical scene requires at least one page image.")
-    width, height = resolution
+    width, height = normalize_resolution(resolution)
     canvas = _create_background_image(resolution, background)
     margin = max(24, int(min(width, height) * margin_ratio))
     count = len(page_image_paths)
@@ -1740,7 +1753,7 @@ def create_video(
     audio_path: str | Path,
     timestamp_rows: Sequence[dict],
     output_path: str | Path,
-    resolution: Tuple[int, int] = (1920, 1080),
+    resolution: Union[str, Tuple[int, int]] = (1920, 1080),
     background: str = "white",
     open_book_gap: int = 24,
     render_scale: float = 3.0,
@@ -1754,6 +1767,7 @@ def create_video(
     include_cover_with_part1: bool = True,
     cover_page: int = 1,
 ) -> Path:
+    resolution = normalize_resolution(resolution)
     pdf = Path(pdf_path)
     audio = Path(audio_path)
     output = Path(output_path)
@@ -2399,7 +2413,7 @@ if __name__ == "__main__":
 def generate_preview_scene(
     pdf_pages: List[Path],
     layout: str,
-    resolution: Tuple[int, int],
+    resolution: Union[str, Tuple[int, int]],
     background: str,
     watermark_options: dict,
     open_book_gap: int
@@ -2408,6 +2422,7 @@ def generate_preview_scene(
     Generates a preview scene and applies the watermark.
     Returns a dict containing the PIL.Image 'image' and 'watermark_box' dict.
     """
+    resolution = normalize_resolution(resolution)
     import tempfile
     
     if not pdf_pages:

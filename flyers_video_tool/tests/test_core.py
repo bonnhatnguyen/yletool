@@ -362,5 +362,24 @@ class WatermarkOptionsTest(unittest.TestCase):
             normalize_watermark_options(enabled=True, text="Brand", position="middle-right")
 
 
+class NormalizeResolutionTest(unittest.TestCase):
+    def test_normalize_resolution_string(self):
+        from flyers_video_tool.flyers_video_tool import normalize_resolution
+        self.assertEqual(normalize_resolution("1280x720"), (1280, 720))
+        self.assertEqual(normalize_resolution(" 1920 X 1080 "), (1920, 1080))
+
+    def test_normalize_resolution_tuple(self):
+        from flyers_video_tool.flyers_video_tool import normalize_resolution
+        self.assertEqual(normalize_resolution((1280, 720)), (1280, 720))
+        self.assertEqual(normalize_resolution([3840, 2160]), (3840, 2160))
+        
+    def test_normalize_resolution_invalid(self):
+        from flyers_video_tool.flyers_video_tool import normalize_resolution
+        with self.assertRaisesRegex(ValueError, "Invalid resolution"):
+            normalize_resolution("1280")
+        with self.assertRaisesRegex(ValueError, "Invalid resolution"):
+            normalize_resolution((1280,))
+
+
 if __name__ == "__main__":
     unittest.main()
