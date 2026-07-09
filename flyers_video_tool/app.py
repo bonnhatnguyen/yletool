@@ -16,6 +16,7 @@ from flyers_video_tool import (
     get_audio_duration,
     infer_test_number_from_name,
     load_page_map_config,
+    normalize_page_map_config,
     normalize_watermark_options,
     parse_timestamps_csv,
     process_batch,
