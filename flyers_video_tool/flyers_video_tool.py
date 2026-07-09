@@ -1629,7 +1629,7 @@ def _check_ffmpeg_available() -> None:
 def _get_best_h264_encoder() -> tuple[str, dict]:
     try:
         import subprocess
-        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True)
+        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         output = result.stdout
         if "h264_nvenc" in output:
             return "h264_nvenc", {"preset": "fast"}
@@ -1892,7 +1892,7 @@ def create_video(
             ])
             
             try:
-                subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
+                subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
                 if progress_callback:
                     progress_callback("Hoàn tất xuất video nhanh!", 1.0, 0)
                 return output
