@@ -154,13 +154,13 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         
         if f"{prefix}_vertical_position" not in st.session_state:
             st.session_state[f"{prefix}_vertical_position"] = "bottom"
-            st.session_state[f"{prefix}_horizontal_position"] = "right"
+            st.session_state[f"{prefix}_horizontal_position"] = "center"
             
         wm_cols = st.columns(4)
         with wm_cols[0]:
             wm_text = st.text_input("Chữ đóng dấu", key=f"{prefix}_wm_text")
         with wm_cols[1]:
-            wm_image = st.file_uploader("Ảnh PNG đóng dấu", type=["png"], key=f"{prefix}_wm_image")
+            wm_image = st.file_uploader("Ảnh đóng dấu", type=["png", "jpg", "jpeg"], key=f"{prefix}_wm_image")
         with wm_cols[2]:
             wm_opacity = st.slider("Độ mờ", min_value=0.0, max_value=1.0, value=0.35, step=0.05, key=f"{prefix}_wm_opacity")
         with wm_cols[3]:
@@ -194,13 +194,13 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             with col3_1:
                 if st.button("↗ Trên phải", key=f"{prefix}_tr", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "top"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
+                    st.session_state[f"{prefix}_horizontal_position"] = "center"
                 if st.button("→ Giữa phải", key=f"{prefix}_mr", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "center"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
+                    st.session_state[f"{prefix}_horizontal_position"] = "center"
                 if st.button("↘ Dưới phải", key=f"{prefix}_br", width='stretch'):
                     st.session_state[f"{prefix}_vertical_position"] = "bottom"
-                    st.session_state[f"{prefix}_horizontal_position"] = "right"
+                    st.session_state[f"{prefix}_horizontal_position"] = "center"
             
             with col3_2:
                 # Visual Preview Box
@@ -221,13 +221,25 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 align_items = flex_items.get(vert_pos, "flex-end")
                 justify_content = flex_justify.get(horiz_pos, "flex-end")
                 
+                watermark_image_path = None
                 if wm_image is not None:
+                    watermark_image_path = save_upload(wm_image, "watermarks")
+                else:
+                    default_img = Path(r"C:\Users\Bao Nguyen\Downloads\YLE logo.jpg")
+                    if default_img.exists():
+                        watermark_image_path = default_img
+
+                if watermark_image_path is not None:
                     import base64
-                    img_bytes = wm_image.getvalue()
+                    import mimetypes
+                    with open(watermark_image_path, "rb") as img_f:
+                        img_bytes = img_f.read()
+                    mime_type, _ = mimetypes.guess_type(watermark_image_path)
+                    mime_type = mime_type or "image/png"
                     b64_img = base64.b64encode(img_bytes).decode("utf-8")
-                    content_html = f'<img src="data:image/png;base64,{b64_img}" style="max-height: {max(20, wm_size/2)}px; opacity: {wm_opacity}; object-fit: contain;" />'
+                    content_html = f'<img src="data:{mime_type};base64,{b64_img}" style="max-height: {max(20, wm_size/2)}px; opacity: {wm_opacity}; object-fit: contain;" />'
                     if wm_text:
-                        st.info("Bạn đang dùng ảnh PNG làm watermark, chữ đóng dấu sẽ không được hiển thị.")
+                        st.info("Bạn đang dùng ảnh làm watermark, chữ đóng dấu sẽ không được hiển thị.")
                 elif wm_text:
                     content_html = f'<div style="color: rgba(255,255,255,{wm_opacity}); font-size: {max(10, wm_size/10)}px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 5px;">{wm_text}</div>'
                 else:
@@ -239,10 +251,6 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 </div>
                 """
                 st.markdown(html_code, unsafe_allow_html=True)
-
-        watermark_image_path = None
-        if wm_image is not None:
-            watermark_image_path = save_upload(wm_image, "watermarks")
 
         watermark_has_content = bool(wm_text or watermark_image_path)
         if wm_enabled and not watermark_has_content:
