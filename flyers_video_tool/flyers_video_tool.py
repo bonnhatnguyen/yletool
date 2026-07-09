@@ -1759,6 +1759,7 @@ def create_video(
     transition_effect: str = "crossfade",
     transition_duration: float = 0.8,
     watermark_options: Optional[dict] = None,
+    progress_callback = None,
 ) -> Path:
     pdf = Path(pdf_path)
     audio = Path(audio_path)
@@ -1786,6 +1787,8 @@ def create_video(
     final_clip = None
     try:
         LOGGER.info("Rendering pages...")
+        if progress_callback:
+            progress_callback("Đang xử lý các trang PDF...", 0.05, None)
         rendered_pages: Dict[int, Path] = {}
         for row in timestamp_rows:
             for page in row["pdf_pages"]:
@@ -1793,6 +1796,8 @@ def create_video(
                     rendered_pages[page] = render_pdf_page(pdf, page, work_dir / "pages", render_scale)
 
         LOGGER.info("Creating video scenes...")
+        if progress_callback:
+            progress_callback("Đang tạo các scene (cảnh) tĩnh...", 0.15, None)
         scene_paths: List[Path] = []
         durations: List[float] = []
         for index, row in enumerate(timestamp_rows, start=1):
@@ -1827,6 +1832,8 @@ def create_video(
             durations[-1] = adjusted_last
 
         LOGGER.info("Creating video...")
+        if progress_callback:
+            progress_callback("Đang kết nối các cảnh và áp dụng hiệu ứng chuyển cảnh...", 0.30, None)
         timeline_segments = build_timeline_segments(durations, transition_effect, transition_duration)
         for segment in timeline_segments:
             if segment["type"] == "scene":
@@ -1851,6 +1858,35 @@ def create_video(
         video_duration = sum(segment["duration"] for segment in timeline_segments)
         audio_for_video = _clip_subclip(audio_clip, 0, min(audio_clip.duration, video_duration))
         final_clip = _clip_with_audio(video, audio_for_video)
+        import time
+        from proglog import ProgressBarLogger
+
+        class StreamlitVideoLogger(ProgressBarLogger):
+            def __init__(self, callback):
+                super().__init__()
+                self.callback = callback
+                self.start_time = time.time()
+                self.last_update = 0
+
+            def bars_callback(self, bar, attr, value, old_value=None):
+                if bar == 't':
+                    total = self.bars[bar]['total']
+                    if total > 0:
+                        current_time = time.time()
+                        if current_time - self.last_update > 0.5 or value == total:
+                            self.last_update = current_time
+                            progress = value / total
+                            elapsed = current_time - self.start_time
+                            if progress > 0:
+                                remaining = max(0, (elapsed / progress) - elapsed)
+                            else:
+                                remaining = 0
+                            
+                            overall_prog = 0.3 + (progress * 0.7)
+                            if self.callback:
+                                self.callback("Đang xuất video và render khung hình...", overall_prog, remaining)
+                                
+        logger = StreamlitVideoLogger(progress_callback) if progress_callback else "bar"
         final_clip.write_videofile(
             str(output),
             codec="libx264",
@@ -1858,6 +1894,7 @@ def create_video(
             fps=fps,
             preset="medium",
             threads=os.cpu_count() or 4,
+            logger=logger,
         )
     finally:
         for clip in clips:
