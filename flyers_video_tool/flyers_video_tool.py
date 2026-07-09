@@ -789,30 +789,36 @@ def transcribe_audio(
             "Missing dependency faster-whisper. Install with: pip install -r requirements.txt"
         ) from exc
 
-    LOGGER.info("Transcribing audio with faster-whisper local model '%s'...", whisper_model)
-    model = WhisperModel(whisper_model, device=device, compute_type=compute_type)
-    segments_iter, _info = model.transcribe(
-        str(path),
-        language=language or None,
-        word_timestamps=True,
-        vad_filter=True,
-    )
+    try:
+        LOGGER.info("Transcribing audio with faster-whisper local model '%s' on device '%s'...", whisper_model, device)
+        model = WhisperModel(whisper_model, device=device, compute_type=compute_type)
+        segments_iter, _info = model.transcribe(
+            str(path),
+            language=language or None,
+            word_timestamps=True,
+            vad_filter=True,
+        )
 
-    segments = []
-    for segment in segments_iter:
-        item = {
-            "start": float(segment.start),
-            "end": float(segment.end),
-            "text": segment.text.strip(),
-        }
-        words = getattr(segment, "words", None)
-        if words:
-            item["words"] = [
-                {"start": float(word.start), "end": float(word.end), "word": word.word}
-                for word in words
-            ]
-        segments.append(item)
-    return segments
+        segments = []
+        for segment in segments_iter:
+            item = {
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "text": segment.text.strip(),
+            }
+            words = getattr(segment, "words", None)
+            if words:
+                item["words"] = [
+                    {"start": float(word.start), "end": float(word.end), "word": word.word}
+                    for word in words
+                ]
+            segments.append(item)
+        return segments
+    except Exception as exc:
+        if "cublas" in str(exc).lower() and device != "cpu":
+            LOGGER.warning("CUDA/cuBLAS error detected. Falling back to CPU for Whisper transcription.")
+            return transcribe_audio(audio_path, whisper_model, language, device="cpu", compute_type="int8")
+        raise
 
 
 def _normalize_text(text: str) -> str:
