@@ -249,7 +249,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         st.subheader("Tuỳ chỉnh Render")
         
         # UI controls for background
-        bg_cols = st.columns([1, 1, 1])
+        bg_cols = st.columns([1, 1, 1, 1])
         with bg_cols[0]:
             resolution = st.selectbox("Độ phân giải", ["1280x720", "1920x1080", "3840x2160"], index=0, key=f"{prefix}_resolution")
         with bg_cols[1]:
@@ -278,6 +278,8 @@ def shared_render_options(prefix: str, in_expander: bool = True):
             render_scale = st.number_input(
                 "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
             )
+        with bg_cols[3]:
+            open_book_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key=f"{prefix}_gap")
 
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         from pathlib import Path
@@ -400,7 +402,7 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                         resolution=(res_w, res_h),
                         background=background_value,
                         watermark_options=watermark_options,
-                        open_book_gap=24
+                        open_book_gap=open_book_gap
                     )
                     
                     st.image(preview_data["image"], use_column_width=True)
@@ -411,15 +413,17 @@ def shared_render_options(prefix: str, in_expander: bool = True):
                 except Exception as e:
                     st.error(f"Lỗi khi render xem trước: {e}")
 
+    res_w, res_h = map(int, resolution.split("x"))
     return {
         "export_mode": "fast_static",
         "fps": 1,
-        "resolution": resolution,
+        "resolution": (res_w, res_h),
         "background": background_value,
         "transition_effect": "none",
         "transition_duration": 0.0,
         "render_scale": render_scale,
-        "watermark_options": watermark_options
+        "watermark_options": watermark_options,
+        "open_book_gap": open_book_gap
     }
 
 st.title("YLE Listening Video Tool")
@@ -605,7 +609,6 @@ if app_mode == "Tạo 1 Video":
 
     st.header("Bước 4: Xuất Video")
     single_options = shared_render_options("single", in_expander=True)
-    open_book_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="single_gap")
     output_name = st.text_input("Tên file xuất ra", value=f"{level}_test_{test_number}.mp4")
     user_reviewed = st.checkbox("Tôi đã kiểm tra thời gian thủ công", value=False)
     
@@ -668,8 +671,7 @@ if app_mode == "Tạo 1 Video":
                         pdf_path=pdf_path,
                         audio_path=audio_path,
                         timestamp_rows=rows,
-                        output_path=persistent_output_path,
-                        open_book_gap=int(open_book_gap),
+                        output_path=str(persistent_output_path),
                         **single_options,
                     )
                     
@@ -740,7 +742,6 @@ elif app_mode == "Xử lý hàng loạt":
         batch_model = st.text_input("Mô hình Whisper", value="small", key="batch_model")
         batch_language = st.text_input("Ngôn ngữ", value="en", key="batch_language")
         batch_options = shared_render_options("batch", in_expander=False)
-        batch_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
 
     if st.button("Kiểm tra ghép nối file", width='stretch'):
         try:
@@ -796,7 +797,6 @@ elif app_mode == "Xử lý hàng loạt":
                     infer_test_number=infer_test,
                     whisper_model=batch_model,
                     language=batch_language,
-                    open_book_gap=int(batch_gap),
                     detected_csv_dir=output_dir,
                     csv_only=csv_only,
                     overwrite=overwrite,

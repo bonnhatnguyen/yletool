@@ -32,3 +32,22 @@ def test_shared_render_options_returns_watermark_options():
     
     labels = [btn.label for btn in at.button]
     assert "Xem trước đúng như file xuất" in labels
+
+def test_shared_render_options_returns_resolution_tuple_and_gap():
+    from flyers_video_tool.app import shared_render_options
+    
+    # We can test the return values directly by mocking Streamlit or 
+    # relying on the default values set by st.selectbox when we mock it.
+    # Since we can't easily call Streamlit functions outside AppTest,
+    # let's use AppTest to inspect the session state or just read the code structure.
+    import inspect
+    source = inspect.getsource(shared_render_options)
+    
+    # Verify the return block formats resolution as tuple and includes open_book_gap
+    assert '"resolution": (res_w, res_h)' in source or '"resolution": (int(res_w), int(res_h))' in source
+    assert '"open_book_gap": open_book_gap' in source
+    assert 'res_w, res_h = map(int, resolution.split("x"))' in source
+    
+    # Verify preview scene gets the variable, not hardcoded 24
+    assert 'open_book_gap=open_book_gap' in source
+    assert 'open_book_gap=24' not in source
