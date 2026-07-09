@@ -24,7 +24,7 @@ from flyers_video_tool import (
 )
 
 
-st.set_page_config(page_title="Flyers Video Tool", layout="wide")
+st.set_page_config(page_title="YLE Listening Video Tool", layout="wide")
 
 
 def session_dir() -> Path:
@@ -189,7 +189,7 @@ def shared_render_options(prefix: str):
     }
 
 
-st.title("Flyers Video Tool")
+st.title("YLE Listening Video Tool")
 single_tab, batch_tab = st.tabs(["Tạo 1 Video", "Xử lý hàng loạt"])
 
 with single_tab:
@@ -216,6 +216,11 @@ with single_tab:
         page_map_config = load_page_map_config(page_map_path)
     else:
         page_map_config = get_preset_page_map(level, test_number)
+        if page_map_config.get("parts"):
+            # Auto calculate pdf_offset for default map based on UI input
+            calc_offset = page_map_config["parts"][0]["pages"][0] - int(printed_start_page)
+            page_map_config["pdf_offset"] = calc_offset
+            page_map_config = normalize_page_map_config(page_map_config)
 
     if auto_page_map_clicked:
         if pdf_file is None:
@@ -303,8 +308,13 @@ with single_tab:
         pdf_offset=st.session_state.get("pdf_offset", page_map_config.get("pdf_offset"))
     )
 
+    for part in active_page_map_config["parts"]:
+        if len(part["pages"]) >= 3:
+            st.warning(f"Suspicious page range in Part {part['part']} ({len(part['pages'])} pages). This likely includes non-Listening pages. Please review.")
+
     if "timestamp_df" not in st.session_state:
         st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
+        st.session_state.timestamps_detected = False
 
     controls = st.columns(3)
     with controls[0]:
@@ -316,10 +326,12 @@ with single_tab:
 
     if reset_clicked:
         st.session_state.timestamp_df = rows_to_dataframe(default_rows_for_page_map(active_page_map_config))
+        st.session_state.timestamps_detected = False
 
     if csv_upload is not None:
         csv_path = save_upload(csv_upload, "csv")
         st.session_state.timestamp_df = rows_to_dataframe(parse_timestamps_csv(csv_path))
+        st.session_state.timestamps_detected = True
 
     if detect_clicked:
         if pdf_file is None or audio_file is None:
@@ -338,6 +350,7 @@ with single_tab:
                 detected_csv = session_dir() / "detected_timestamps.csv"
                 export_detected_timestamps(rows, detected_csv)
                 st.session_state.timestamp_df = rows_to_dataframe(rows)
+                st.session_state.timestamps_detected = True
                 for warning in warnings:
                     st.warning(warning)
                 status.update(label="Nhận diện thời gian hoàn tất", state="complete")
@@ -360,6 +373,9 @@ with single_tab:
         },
     )
     st.session_state.timestamp_df = edited_df
+
+    if not st.session_state.get("timestamps_detected", False) and csv_upload is None:
+        st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự động nhận diện thời gian' hoặc tải lên file CSV đã duyệt trước khi xuất video.")
 
     st.subheader("Xuất Video")
     single_options = shared_render_options("single")
@@ -415,7 +431,7 @@ with batch_tab:
     batch_level = st.selectbox("Cấp độ mặc định", ["starters", "movers", "flyers"], index=2, key="batch_level")
     batch_test = st.selectbox("Bài Test mặc định", [1, 2, 3], index=0, key="batch_test")
     batch_page_map_upload = st.file_uploader("File page_map.json mặc định tuỳ chọn", type=["json"], key="batch_default_page_map")
-    batch_auto_page_map = st.checkbox("Tự động nhận diện trang cho từng PDF", value=False, key="batch_auto_page_map")
+    batch_auto_page_map = st.checkbox("Tự động nhận diện trang cho từng PDF", value=True, key="batch_auto_page_map")
     batch_range_cols = st.columns(3)
     with batch_range_cols[0]:
         batch_printed_start = st.number_input("Trang sách/mục lục bắt đầu Phần 1", min_value=1, value=4, step=1, key="batch_printed_start")
