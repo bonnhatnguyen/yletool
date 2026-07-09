@@ -13,6 +13,17 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
+if os.name == "nt":
+    import glob
+    _site_packages = next((p for p in sys.path if "site-packages" in p), None)
+    if _site_packages:
+        for _lib in glob.glob(f"{_site_packages}/nvidia/*/bin"):
+            if _lib not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = _lib + os.pathsep + os.environ.get("PATH", "")
+            try:
+                os.add_dll_directory(_lib)
+            except Exception:
+                pass
 
 DEFAULT_PAGE_MAP: Dict[int, Dict[str, List[int]]] = {
     1: {
@@ -783,18 +794,6 @@ def transcribe_audio(
     if not path.exists():
         raise FileNotFoundError(f"Audio file not found: {path}")
     try:
-        import os
-        if os.name == "nt":
-            import glob
-            import sys
-            site_packages = next((p for p in sys.path if "site-packages" in p), None)
-            if site_packages:
-                for lib in glob.glob(f"{site_packages}/nvidia/*/bin"):
-                    os.environ["PATH"] = lib + os.pathsep + os.environ.get("PATH", "")
-                    try:
-                        os.add_dll_directory(lib)
-                    except Exception:
-                        pass
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise RuntimeError(
