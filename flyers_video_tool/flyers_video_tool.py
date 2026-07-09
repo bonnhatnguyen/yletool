@@ -1625,6 +1625,22 @@ def _check_ffmpeg_available() -> None:
         raise RuntimeError("FFmpeg was not found in PATH. Install FFmpeg and restart the terminal.")
 
 
+
+def _get_best_h264_encoder() -> tuple[str, dict]:
+    try:
+        import subprocess
+        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True)
+        output = result.stdout
+        if "h264_nvenc" in output:
+            return "h264_nvenc", {"preset": "fast"}
+        if "h264_qsv" in output:
+            return "h264_qsv", {"preset": "veryfast"}
+        if "h264_amf" in output:
+            return "h264_amf", {"quality": "speed"}
+    except Exception:
+        pass
+    return "libx264", {"preset": "ultrafast"}
+
 def _validate_timestamp_rows(rows: Sequence[dict]) -> None:
     previous_end = -math.inf
     for row in rows:
@@ -1760,6 +1776,7 @@ def create_video(
     transition_duration: float = 0.8,
     watermark_options: Optional[dict] = None,
     progress_callback = None,
+    export_mode: str = "fast_static",
 ) -> Path:
     pdf = Path(pdf_path)
     audio = Path(audio_path)
@@ -1832,6 +1849,57 @@ def create_video(
             durations[-1] = adjusted_last
 
         LOGGER.info("Creating video...")
+        
+        if export_mode == "fast_static":
+            if progress_callback:
+                progress_callback("Đang phân tích phần cứng video...", 0.25, None)
+            
+            encoder, encoder_opts = _get_best_h264_encoder()
+            
+            if progress_callback:
+                progress_callback(f"Đang xuất video (Fast Mode - {encoder})...", 0.30, None)
+            
+            concat_txt_path = work_dir / "concat.txt"
+            with open(concat_txt_path, "w", encoding="utf-8") as f:
+                for idx, duration in enumerate(durations):
+                    scene_path = scene_paths[idx]
+                    safe_path = str(scene_path).replace('\\', '/')
+                    f.write(f"file '{safe_path}'\n")
+                    f.write(f"duration {duration:.3f}\n")
+                
+                # Repeat last file for ffmpeg concat quirk
+                safe_last_path = str(scene_paths[-1]).replace('\\', '/')
+                f.write(f"file '{safe_last_path}'\n")
+            
+            import subprocess
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", 
+                "-f", "concat", "-safe", "0", "-i", str(concat_txt_path),
+                "-i", str(audio),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", encoder,
+            ]
+            for k, v in encoder_opts.items():
+                ffmpeg_cmd.extend([f"-{k}", v])
+            
+            ffmpeg_cmd.extend([
+                "-tune", "stillimage",
+                "-r", str(fps),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-shortest",
+                str(output)
+            ])
+            
+            try:
+                subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
+                if progress_callback:
+                    progress_callback("Hoàn tất xuất video nhanh!", 1.0, 0)
+                return output
+            except subprocess.CalledProcessError as e:
+                LOGGER.error(f"FFmpeg fast_static failed: {e.stderr}")
+                raise RuntimeError(f"Chế độ xuất nhanh ({encoder}) bị lỗi! Vui lòng thử lại với chế độ 'Cân bằng'. Chi tiết lỗi: {e.stderr[-200:]}")
+                
         if progress_callback:
             progress_callback("Đang kết nối các cảnh và áp dụng hiệu ứng chuyển cảnh...", 0.30, None)
         timeline_segments = build_timeline_segments(durations, transition_effect, transition_duration)

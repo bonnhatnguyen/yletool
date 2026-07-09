@@ -133,18 +133,36 @@ def shared_render_options(prefix: str, in_expander: bool = True):
     from contextlib import nullcontext
     context = st.expander("Cài đặt Video & Đóng dấu (Nâng cao)") if in_expander else nullcontext()
     with context:
-        cols = st.columns(5)
+        st.subheader("Tuỳ chỉnh Render")
+        mode_cols = st.columns([2, 1, 1])
+        with mode_cols[0]:
+            export_mode_display = st.selectbox(
+                "Chế độ xuất video",
+                options=["fast_static", "balanced", "high_quality"],
+                format_func=lambda x: {
+                    "fast_static": "Nâng tốc độ tối đa, không chuyển cảnh",
+                    "balanced": "Cân bằng (hỗ trợ chuyển cảnh nhẹ)",
+                    "high_quality": "Chất lượng cao nhất, lâu hơn"
+                }[x],
+                index=0,
+                key=f"{prefix}_export_mode"
+            )
+        with mode_cols[1]:
+            resolution = st.selectbox("Độ phân giải", ["1280x720", "1920x1080", "3840x2160"], index=0 if export_mode_display == "fast_static" else 1, key=f"{prefix}_resolution")
+        with mode_cols[2]:
+            default_fps = 2 if export_mode_display == "fast_static" else (10 if export_mode_display == "balanced" else 30)
+            fps = st.selectbox("Số khung hình (FPS)", [1, 2, 5, 10, 30], index=[1, 2, 5, 10, 30].index(default_fps), key=f"{prefix}_fps")
+            
+        cols = st.columns(4)
         with cols[0]:
-            resolution = st.selectbox("Độ phân giải", ["1920x1080", "3840x2160"], key=f"{prefix}_resolution")
-        with cols[1]:
             background = st.selectbox("Màu nền", ["white", "dark"], key=f"{prefix}_background")
+        with cols[1]:
+            transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], index=3 if export_mode_display == "fast_static" else 0, key=f"{prefix}_transition")
         with cols[2]:
-            transition_effect = st.selectbox("Hiệu ứng chuyển cảnh", ["crossfade", "fade", "slide", "none"], key=f"{prefix}_transition")
-        with cols[3]:
             transition_duration = st.number_input(
                 "Thời gian chuyển cảnh (giây)", min_value=0.0, max_value=5.0, value=0.8, step=0.1, key=f"{prefix}_transition_duration"
             )
-        with cols[4]:
+        with cols[3]:
             render_scale = st.number_input(
                 "Tỉ lệ Render PDF", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key=f"{prefix}_render_scale"
             )
