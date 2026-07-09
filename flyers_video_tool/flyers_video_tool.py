@@ -694,6 +694,123 @@ def get_format_duration(video_path: str | Path) -> float:
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return float(result.stdout.strip())
 
+import logging
+import os
+import subprocess
+from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
+
+def validate_or_repair_output_duration(
+    temp_output: Path,
+    target_audio_duration: float,
+    fps: int,
+    encoder: str,
+) -> tuple[bool, str]:
+    from flyers_video_tool.flyers_video_tool import get_format_duration, get_stream_durations
+    
+    output_format_duration = get_format_duration(temp_output)
+    output_video_duration, output_audio_duration = get_stream_durations(temp_output)
+    
+    # Calculate extra
+    audio_delta = abs(output_audio_duration - target_audio_duration) if output_audio_duration is not None else None
+    format_extra = (output_format_duration - target_audio_duration) if output_format_duration is not None else None
+    video_extra = (output_video_duration - target_audio_duration) if output_video_duration is not None else None
+
+    # Base logging
+    log_msg = (
+        f"target_audio_duration={target_audio_duration:.3f}\n"
+        f"output_format_duration={output_format_duration}\n"
+        f"output_audio_duration={output_audio_duration}\n"
+        f"output_video_duration={output_video_duration}\n"
+        f"fps={fps}\n"
+        f"encoder={encoder}\n"
+        f"audio_delta={audio_delta}\n"
+        f"format_extra={format_extra}\n"
+        f"video_extra={video_extra}\n"
+    )
+
+    valid = True
+    repair_needed = False
+    reject_reason = ""
+
+    # Rules
+    if output_audio_duration is not None:
+        if audio_delta > 1.0:
+            valid = False
+            reject_reason = f"Audio stream length mismatch (diff: {audio_delta:.3f}s > 1.0s)"
+        else:
+            # Audio is correct, check format/video extra
+            max_extra = max(format_extra or 0, video_extra or 0)
+            if max_extra > 10.0:
+                repair_needed = True
+            elif max_extra > 2.0:
+                repair_needed = True # 2 to 10s: attempt repair/remux
+    else:
+        # Fallback to format duration
+        allowed_format_tolerance = max(2.0, 1.0 / fps + 1.0)
+        if output_format_duration is None:
+            valid = False
+            reject_reason = "No duration could be extracted"
+        elif abs(output_format_duration - target_audio_duration) > allowed_format_tolerance:
+            repair_needed = True
+
+    if not valid:
+        return False, f"Validation failed: {reject_reason}\n{log_msg}"
+
+    if repair_needed:
+        LOGGER.warning("Duration mismatch detected. Attempting copy remux repair...")
+        repaired_output = temp_output.with_name(temp_output.name + "_repaired.mp4")
+        
+        repair_cmd = [
+            "ffmpeg", "-y", "-i", str(temp_output), "-t", f"{target_audio_duration:.3f}",
+            "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart",
+            str(repaired_output)
+        ]
+        
+        subprocess.run(repair_cmd, capture_output=True)
+        
+        rep_fmt = get_format_duration(repaired_output)
+        rep_vid, rep_aud = get_stream_durations(repaired_output)
+        
+        # Check if repair worked (format diff <= allowed tolerance)
+        allowed_format_tolerance = max(2.0, 1.0 / fps + 1.0)
+        
+        if rep_fmt is not None and abs(rep_fmt - target_audio_duration) <= allowed_format_tolerance:
+            LOGGER.info("Copy remux repair succeeded.")
+            os.replace(str(repaired_output), str(temp_output))
+            log_msg += "attempted repair: yes (copy)\nrepair result: success\n"
+        else:
+            LOGGER.warning("Copy remux repair failed. Attempting libx264 re-encode repair...")
+            repair_cmd2 = [
+                "ffmpeg", "-y", "-i", str(temp_output), "-t", f"{target_audio_duration:.3f}",
+                "-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-preset", "ultrafast",
+                "-tune", "stillimage", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", 
+                "-movflags", "+faststart", str(repaired_output)
+            ]
+            subprocess.run(repair_cmd2, capture_output=True)
+            rep_fmt2 = get_format_duration(repaired_output)
+            
+            if rep_fmt2 is not None and abs(rep_fmt2 - target_audio_duration) <= allowed_format_tolerance:
+                LOGGER.info("Re-encode repair succeeded.")
+                os.replace(str(repaired_output), str(temp_output))
+                log_msg += "attempted repair: yes (re-encode)\nrepair result: success\n"
+            else:
+                LOGGER.error("Re-encode repair failed.")
+                log_msg += "attempted repair: yes (re-encode)\nrepair result: failed\n"
+                
+                # If we were > 10s extra, and repair failed, we reject
+                if output_audio_duration is not None:
+                    max_extra = max(format_extra or 0, video_extra or 0)
+                    if max_extra > 10.0:
+                        return False, f"Validation failed: Repair failed and extra duration > 10s\n{log_msg}"
+                else:
+                    return False, f"Validation failed: Repair failed for format duration fallback\n{log_msg}"
+    else:
+        log_msg += "attempted repair: no\n"
+        
+    return True, log_msg
+
 def get_stream_durations(video_path: str | Path):
     import subprocess
     cmd = [
@@ -1650,19 +1767,23 @@ def _check_ffmpeg_available() -> None:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("FFmpeg was not found in PATH. Install FFmpeg and restart the terminal.")
 
+UNSUPPORTED_ENCODERS: set[str] = set()
 
 
-def _get_available_h264_encoders() -> list[tuple[str, dict]]:
+def _get_available_h264_encoders(use_gpu: bool = False) -> list[tuple[str, dict]]:
+    if not use_gpu:
+        return [("libx264", {"preset": "ultrafast"})]
+        
     encoders = []
     try:
         import subprocess
         result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         output = result.stdout
-        if "h264_nvenc" in output:
+        if "h264_nvenc" in output and "h264_nvenc" not in UNSUPPORTED_ENCODERS:
             encoders.append(("h264_nvenc", {"preset": "fast"}))
-        if "h264_qsv" in output:
+        if "h264_qsv" in output and "h264_qsv" not in UNSUPPORTED_ENCODERS:
             encoders.append(("h264_qsv", {"preset": "veryfast"}))
-        if "h264_amf" in output:
+        if "h264_amf" in output and "h264_amf" not in UNSUPPORTED_ENCODERS:
             encoders.append(("h264_amf", {"quality": "speed"}))
     except Exception:
         pass
@@ -1766,6 +1887,7 @@ def create_video(
     export_mode: str = "fast_static",
     include_cover_with_part1: bool = True,
     cover_page: int = 1,
+    use_gpu: bool = False,
 ) -> Path:
     resolution = normalize_resolution(resolution)
     pdf = Path(pdf_path)
@@ -1886,7 +2008,7 @@ def create_video(
             if progress_callback:
                 progress_callback("Đang phân tích phần cứng video...", 0.25, None)
             
-            available_encoders = _get_available_h264_encoders()
+            available_encoders = _get_available_h264_encoders(use_gpu=use_gpu)
             
             concat_txt_path = work_dir / "concat.txt"
             with open(concat_txt_path, "w", encoding="utf-8") as f:
@@ -2104,6 +2226,7 @@ def process_batch(
     overwrite: bool = False,
     batch_report: Optional[str | Path] = None,
     printed_start_page: Optional[int] = None,
+    use_gpu: bool = False,
 ) -> List[dict]:
     results: List[dict] = []
     csv_root = Path(detected_csv_dir) if detected_csv_dir else None
@@ -2192,6 +2315,7 @@ def process_batch(
                     transition_effect=transition_effect,
                     transition_duration=transition_duration,
                     watermark_options=watermark_options,
+                    use_gpu=use_gpu,
                 )
                 result["status"] = "exported"
                 LOGGER.info("[%s] exported: %s", base_name, pair["output_path"])
@@ -2255,6 +2379,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--watermark-opacity", type=float, default=0.35)
     parser.add_argument("--watermark-size", type=int, default=120, help="Text font size or PNG max size in pixels.")
     parser.add_argument("--watermark-margin", type=int, default=32)
+    parser.add_argument("--use-gpu", action="store_true", help="Use GPU for video encoding.")
     return parser
 
 
@@ -2324,6 +2449,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 overwrite=args.overwrite,
                 batch_report=report_path,
                 printed_start_page=args.printed_start_page,
+                use_gpu=args.use_gpu,
             )
             failed = [result for result in results if result.get("status") == "failed"]
             LOGGER.info("Batch finished: %s exported, %s failed.", len(results) - len(failed), len(failed))
@@ -2399,6 +2525,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             transition_effect=args.transition_effect,
             transition_duration=args.transition_duration,
             watermark_options=watermark_options,
+            use_gpu=args.use_gpu,
         )
         return 0
     except Exception as exc:
@@ -2456,3 +2583,5 @@ def generate_preview_scene(
                 "image": res_img,
                 "watermark_box": None
             }
+
+

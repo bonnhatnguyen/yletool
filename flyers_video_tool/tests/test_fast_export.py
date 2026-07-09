@@ -12,7 +12,7 @@ def test_get_available_h264_encoders_all():
         mock_result.stdout = "h264_nvenc h264_qsv h264_amf"
         mock_run.return_value = mock_result
         
-        encoders = _get_available_h264_encoders()
+        encoders = _get_available_h264_encoders(use_gpu=True)
         assert len(encoders) == 4
         assert encoders[0][0] == "h264_nvenc"
         assert encoders[0][1]["preset"] == "fast"
@@ -27,10 +27,17 @@ def test_get_available_h264_encoders_fallback_only():
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = Exception("ffmpeg not found")
         
-        encoders = _get_available_h264_encoders()
+        encoders = _get_available_h264_encoders(use_gpu=True)
         assert len(encoders) == 1
         assert encoders[0][0] == "libx264"
         assert encoders[0][1]["preset"] == "ultrafast"
+
+def test_get_available_h264_encoders_no_gpu():
+    with patch("subprocess.run") as mock_run:
+        encoders = _get_available_h264_encoders(use_gpu=False)
+        assert len(encoders) == 1
+        assert encoders[0][0] == "libx264"
+        mock_run.assert_not_called()
 
 @patch("flyers_video_tool.flyers_video_tool.tempfile.TemporaryDirectory")
 @patch("flyers_video_tool.flyers_video_tool._check_ffmpeg_available")
@@ -274,3 +281,39 @@ def test_fast_static_ffprobe_rejects_long_video(
     mock_replace.assert_not_called()
     assert "-t" in mock_run.call_args_list[0][0][0]
     assert "1763.110" in mock_run.call_args_list[0][0][0]
+
+def test_validate_or_repair_output_duration_audio_missing_format_ok():
+    from flyers_video_tool.flyers_video_tool import validate_or_repair_output_duration
+    with patch('flyers_video_tool.flyers_video_tool.get_format_duration') as mock_fmt, \
+         patch('flyers_video_tool.flyers_video_tool.get_stream_durations') as mock_stream:
+        mock_fmt.return_value = 10.5
+        mock_stream.return_value = (None, None)
+        valid, msg = validate_or_repair_output_duration(Path('dummy.mp4'), 10.0, 1, 'libx264')
+        assert valid
+        assert 'attempted repair: no' in msg
+
+def test_validate_or_repair_output_duration_audio_ok_format_long():
+    from flyers_video_tool.flyers_video_tool import validate_or_repair_output_duration
+    with patch('flyers_video_tool.flyers_video_tool.get_format_duration') as mock_fmt, \
+         patch('flyers_video_tool.flyers_video_tool.get_stream_durations') as mock_stream, \
+         patch('subprocess.run') as mock_run, \
+         patch('os.replace'):
+        mock_fmt.side_effect = [14.0, 10.0]
+        mock_stream.side_effect = [(None, 10.0), (None, 10.0)]
+        
+        valid, msg = validate_or_repair_output_duration(Path('dummy.mp4'), 10.0, 1, 'libx264')
+        
+        assert valid
+        assert 'attempted repair: yes (copy)' in msg
+        mock_run.assert_called()
+
+def test_validate_or_repair_output_duration_audio_wrong():
+    from flyers_video_tool.flyers_video_tool import validate_or_repair_output_duration
+    with patch('flyers_video_tool.flyers_video_tool.get_format_duration') as mock_fmt, \
+         patch('flyers_video_tool.flyers_video_tool.get_stream_durations') as mock_stream:
+        mock_fmt.return_value = 15.0
+        mock_stream.return_value = (None, 15.0)
+        
+        valid, msg = validate_or_repair_output_duration(Path('dummy.mp4'), 10.0, 1, 'libx264')
+        assert not valid
+        assert 'Validation failed: Audio stream length mismatch' in msg

@@ -281,6 +281,9 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         with bg_cols[3]:
             open_book_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key=f"{prefix}_gap")
 
+        st.subheader("Tăng tốc phần cứng")
+        use_gpu = st.checkbox("Thử tăng tốc phần cứng GPU", value=False, key=f"{prefix}_use_gpu")
+
         st.subheader("Cài đặt Đóng dấu (Watermark)")
         from pathlib import Path
         from PIL import Image, UnidentifiedImageError
@@ -423,7 +426,8 @@ def shared_render_options(prefix: str, in_expander: bool = True):
         "transition_duration": 0.0,
         "render_scale": render_scale,
         "watermark_options": watermark_options,
-        "open_book_gap": open_book_gap
+        "open_book_gap": open_book_gap,
+        "use_gpu": use_gpu
     }
 
 st.title("YLE Listening Video Tool")
