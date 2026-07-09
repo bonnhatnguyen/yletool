@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from PIL import Image, ImageColor, ImageDraw, ImageFont
+from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 

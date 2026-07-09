@@ -381,5 +381,23 @@ class NormalizeResolutionTest(unittest.TestCase):
             normalize_resolution((1280,))
 
 
+class BackgroundImageTest(unittest.TestCase):
+    def test_create_background_image_with_uploaded_file(self):
+        from flyers_video_tool.flyers_video_tool import _create_background_image
+        import tempfile
+        from PIL import Image
+        
+        with tempfile.TemporaryDirectory() as tmp:
+            bg_path = Path(tmp) / "uploaded_bg.png"
+            img = Image.new("RGB", (800, 600), (255, 0, 0))
+            img.save(bg_path)
+            
+            # This should use ImageOps.fit without NameError and return an image of the right size
+            result = _create_background_image((1920, 1080), str(bg_path))
+            self.assertEqual(result.size, (1920, 1080))
+            # Test it doesn't fallback to solid color (which is what happens on exception)
+            # A fit image of solid red will still be solid red, so let's check a pixel
+            self.assertEqual(result.getpixel((0, 0)), (255, 0, 0))
+
 if __name__ == "__main__":
     unittest.main()

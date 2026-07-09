@@ -51,3 +51,11 @@ def test_shared_render_options_returns_resolution_tuple_and_gap():
     # Verify preview scene gets the variable, not hardcoded 24
     assert 'open_book_gap=open_book_gap' in source
     assert 'open_book_gap=24' not in source
+
+def test_generate_preview_scene_import():
+    try:
+        from flyers_video_tool import generate_preview_scene
+        assert generate_preview_scene is not None
+    except ImportError as e:
+        import pytest
+        pytest.fail(f"Could not import generate_preview_scene from flyers_video_tool: {e}")
