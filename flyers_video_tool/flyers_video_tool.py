@@ -13,15 +13,16 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 if os.name == "nt":
     import glob
+    import ctypes
     _site_packages = next((p for p in sys.path if "site-packages" in p), None)
     if _site_packages:
-        for _lib in glob.glob(f"{_site_packages}/nvidia/*/bin"):
-            if _lib not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = _lib + os.pathsep + os.environ.get("PATH", "")
+        for _lib in glob.glob(f"{_site_packages}/nvidia/*/bin/*.dll"):
             try:
-                os.add_dll_directory(_lib)
+                ctypes.CDLL(_lib)
             except Exception:
                 pass
 
