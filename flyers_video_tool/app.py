@@ -433,7 +433,6 @@ def shared_render_options(prefix: str, in_expander: bool = True):
 
 def get_default_ocr_range(level, test_number):
     try:
-        from flyers_video_tool.flyers_video_tool import get_preset_page_map
         preset = get_preset_page_map(level, test_number)
         all_pages = []
         if preset and "parts" in preset:
@@ -442,8 +441,9 @@ def get_default_ocr_range(level, test_number):
                     all_pages.extend(part["pages"])
         if all_pages:
             return max(1, min(all_pages) - 2), max(all_pages) + 6
-    except Exception:
-        pass
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
     return 1, 20
 
 st.title("YLE Listening Video Tool")
