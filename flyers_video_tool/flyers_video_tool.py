@@ -1,6 +1,12 @@
 import argparse
 import csv
 import json
+import hashlib
+from datetime import datetime
+try:
+    import fitz
+except ImportError:
+    fitz = None
 import logging
 import math
 import os
@@ -52,6 +58,7 @@ DEFAULT_PAGE_MAP: Dict[int, Dict[str, List[int]]] = {
 
 SUPPORTED_LEVELS = {"starters", "movers", "flyers"}
 SUPPORTED_LAYOUTS = {"single", "side_by_side", "grid", "vertical", "auto"}
+BOOK_INDEX_CACHE_VERSION = 2
 SUPPORTED_TIMESTAMP_PROVIDERS = {"whisper", "gemini", "auto"}
 GEMINI_MODEL = "gemini-3.5-flash"
 
@@ -475,6 +482,8 @@ def ocr_pdf_pages(
     end_page: Optional[int] = None,
     engine: str = "tesseract",
     language: str = "eng",
+    progress_callback=None,
+    log_callback=None,
 ) -> List[dict]:
     if engine.lower() != "tesseract":
         raise ValueError("Only local Tesseract OCR is currently implemented. Use --ocr-engine tesseract.")
@@ -531,6 +540,329 @@ def ocr_pdf_pages(
         average_confidence = sum(confidences) / len(confidences) if confidences else 0.0
         results.append({"page": page_number, "text": text, "heading_text": heading_text, "confidence": average_confidence})
     return results
+
+
+
+def compute_file_hash(path: str | Path) -> str:
+    hasher = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def extract_pdf_text_index(
+    pdf_path: str | Path, 
+    use_ocr_fallback: bool = True,
+    progress_callback=None, 
+    log_callback=None,
+    output_dir: str | Path = "."
+) -> List[dict]:
+    results = []
+    if fitz is None:
+        if log_callback:
+            log_callback("PyMuPDF (fitz) is not installed. Text extraction will completely rely on OCR.", "warning")
+        doc = None
+        total_pages = 100 # rough fallback
+    else:
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+        
+    if log_callback:
+        log_callback(f"Trích xuất text (hybrid) từ {total_pages} trang PDF...", "info")
+        
+    for i in range(total_pages):
+        page_num = i + 1
+        text_layer = ""
+        if doc is not None:
+            text_layer = doc[i].get_text()
+            
+        norm_layer = _normalize_text(text_layer)
+        
+        # Check if sparse
+        is_sparse = len(norm_layer) < 40 or len(norm_layer.split()) < 5
+        missing_anchors = not any(w in norm_layer for w in ["test", "listening", "part"])
+        
+        do_ocr = use_ocr_fallback and (is_sparse or missing_anchors)
+        
+        ocr_text = ""
+        ocr_heading = ""
+        confidence = 0.0
+        
+        if do_ocr:
+            try:
+                ocr_res = ocr_pdf_pages(
+                    pdf_path=pdf_path,
+                    output_dir=output_dir,
+                    start_page=page_num,
+                    end_page=page_num,
+                )
+                if ocr_res:
+                    ocr_text = ocr_res[0].get("text", "")
+                    ocr_heading = ocr_res[0].get("heading_text", "")
+                    confidence = ocr_res[0].get("confidence", 0.0)
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"Lỗi OCR trang {page_num}: {e}", "warning")
+                    
+        # Merge
+        merged_text = text_layer + " " + ocr_text
+        merged_heading = text_layer + " " + ocr_heading # if fitz, we don't have bounding boxes easily without more logic, so assume all fitz text could be heading if it's there
+        norm_merged = _normalize_text(merged_text)
+        norm_heading = _normalize_text(merged_heading)
+        
+        text_source = "hybrid" if do_ocr and text_layer.strip() else ("ocr" if do_ocr else "text")
+        
+        # Find anchors
+        anchors = []
+        for anchor in ["test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8", "test 9", "test 10", "listening", "part 1", "part 2", "part 3", "part 4", "part 5", "part one", "part two", "part three", "part four", "part five", "questions"]:
+            if anchor in norm_merged:
+                anchors.append(anchor)
+                
+        # Also try regex for test N
+        for m in re.finditer(r"\btest\s*(\d{1,2})\b", norm_merged):
+            t_str = f"test {m.group(1)}"
+            if t_str not in anchors:
+                anchors.append(t_str)
+
+        results.append({
+            "page": page_num,
+            "text_layer_text": text_layer,
+            "text_layer_heading": text_layer,
+            "ocr_text": ocr_text,
+            "ocr_heading": ocr_heading,
+            "merged_text": merged_text,
+            "merged_heading": merged_heading,
+            "normalized_merged": norm_merged,
+            "normalized_heading": norm_heading,
+            "text_source": text_source,
+            "anchors": anchors,
+            "confidence": confidence
+        })
+        
+        if progress_callback:
+            progress_callback(f"Trích xuất text trang {page_num}/{total_pages}", i / total_pages)
+            
+    if doc is not None:
+        doc.close()
+    return results
+
+def build_book_index_from_pdf(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    level: str = "flyers",
+    use_ocr_fallback: bool = True,
+    progress_callback=None,
+    log_callback=None,
+) -> Tuple[dict, List[str]]:
+    pdf_path_obj = Path(pdf_path)
+    if log_callback:
+        log_callback("Bắt đầu quét Book Index từ PDF...", "info")
+        
+    if progress_callback:
+        progress_callback("Đang mã hoá file PDF...", 0.05)
+        
+    file_hash = compute_file_hash(pdf_path_obj)
+    cache_dir = Path(".flyers_cache") / "book_indexes"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{file_hash}_{level}_v{BOOK_INDEX_CACHE_VERSION}.json"
+    
+    if cache_file.exists():
+        if log_callback:
+            log_callback(f"Tìm thấy Book Index cache: {cache_file.name}", "info")
+        with cache_file.open('r', encoding='utf-8') as f:
+            return json.load(f), []
+            
+    warnings = []
+    
+    # Phase 1: Hybrid Extract Text
+    text_pages = extract_pdf_text_index(
+        pdf_path_obj, 
+        use_ocr_fallback=use_ocr_fallback,
+        progress_callback=progress_callback, 
+        log_callback=log_callback,
+        output_dir=Path(output_dir) / "index_ocr"
+    )
+    
+    if not text_pages:
+        return {}, ["Không thể trích xuất text hoặc OCR từ PDF."]
+
+    if progress_callback:
+        progress_callback("Đang phân tích cấu trúc Test...", 0.9)
+        
+    expected_part_count = get_expected_part_count(level)
+    
+    # Phase 2: Find test starts
+    test_candidates = {} # test_number: best_page
+    
+    for page_idx, p_data in enumerate(text_pages):
+        page_num = p_data["page"]
+        text = p_data.get("normalized_merged", "")
+        heading = p_data.get("normalized_heading", "")
+        if _is_contents_page(text):
+            continue
+            
+        test_matches = re.finditer(r"\btest\s*(\d{1,2})\b", heading + " " + text)
+        for match in test_matches:
+            t_num = int(match.group(1))
+            
+            # Rule 1: "Test N" + "Listening" OR "Test N" + "Part 1" (or close)
+            if "listening" in text or "part 1" in text or "part one" in text:
+                if t_num not in test_candidates:
+                    test_candidates[t_num] = page_num
+            else:
+                # check next 2 pages context just in case
+                context_ok = False
+                for fwd in range(1, 3):
+                    if page_idx + fwd < len(text_pages):
+                        nxt_text = text_pages[page_idx + fwd].get("normalized_merged", "")
+                        if "listening" in nxt_text or "part 1" in nxt_text:
+                            context_ok = True
+                            break
+                if context_ok and t_num not in test_candidates:
+                    test_candidates[t_num] = page_num
+
+    sorted_tests = sorted(test_candidates.keys())
+    tests_out = []
+    
+    for idx, t_num in enumerate(sorted_tests):
+        start_page = test_candidates[t_num]
+        
+        # Stop condition
+        stop_page = text_pages[-1]["page"]
+        if idx + 1 < len(sorted_tests):
+            next_test_start = test_candidates[sorted_tests[idx+1]]
+            stop_page = next_test_start - 1
+            
+        # Refine stop page by scanning from start_page to stop_page
+        actual_stop_page = stop_page
+        for p_data in text_pages:
+            p_num = p_data["page"]
+            if p_num <= start_page:
+                continue
+            if p_num > stop_page:
+                break
+            
+            text = p_data.get("normalized_merged", "")
+            if _is_contents_page(text):
+                continue
+                
+            dynamic_stop_patterns = list(PAGE_MAP_STOP_PATTERNS)
+            if idx + 1 < len(sorted_tests):
+                dynamic_stop_patterns.append(rf"\btest\s+{sorted_tests[idx+1]}\b")
+                
+            if any(re.search(pattern, text) for pattern in dynamic_stop_patterns):
+                actual_stop_page = p_num
+                break
+                
+        # Find parts in [start_page, actual_stop_page]
+        parts_found = {}
+        for p_data in text_pages:
+            p_num = p_data["page"]
+            if p_num < start_page: continue
+            if p_num >= actual_stop_page: break
+            
+            heading = p_data.get("normalized_heading", "")
+            text = p_data.get("normalized_merged", "")
+            
+            for part_n in range(1, expected_part_count + 1):
+                # Prefer heading first, then text
+                if re.search(rf"\bpart\s*{part_n}\b", heading) or re.search(rf"\bpart\s*{part_n}\b", text):
+                    if part_n not in parts_found:
+                        parts_found[part_n] = p_num
+                        
+        # Rule 5: Backward search if Part 4/5 found but Part 1 missing
+        missing_early = any(p not in parts_found for p in range(1, 4))
+        found_late = any(p in parts_found for p in [expected_part_count - 1, expected_part_count])
+        
+        if missing_early and found_late:
+            if log_callback:
+                log_callback(f"Test {t_num} thiếu Part đầu nhưng có Part cuối. Đang dò ngược...", "warning")
+            search_start = max(1, start_page - 12)
+            for p_num in range(start_page - 1, search_start - 1, -1):
+                p_data = text_pages[p_num - 1] # 0-indexed
+                text = p_data.get("normalized_merged", "")
+                if "test" in text and "listening" in text and "part 1" in text:
+                    start_page = p_num
+                    test_candidates[t_num] = start_page
+                    if log_callback:
+                        log_callback(f"Đã cập nhật trang bắt đầu Test {t_num} thành {start_page}", "info")
+                    # Re-scan for parts from new start_page
+                    parts_found = {}
+                    for p_data_rescan in text_pages:
+                        p_num_rescan = p_data_rescan["page"]
+                        if p_num_rescan < start_page: continue
+                        if p_num_rescan >= actual_stop_page: break
+                        heading = p_data_rescan.get("normalized_heading", "")
+                        txt = p_data_rescan.get("normalized_merged", "")
+                        for part_n in range(1, expected_part_count + 1):
+                            if re.search(rf"\bpart\s*{part_n}\b", heading) or re.search(rf"\bpart\s*{part_n}\b", txt):
+                                if part_n not in parts_found:
+                                    parts_found[part_n] = p_num_rescan
+                    break
+
+        part_list = []
+        for p_idx, part_n in enumerate(range(1, expected_part_count + 1)):
+            if part_n in parts_found:
+                p_start = parts_found[part_n]
+                
+                # find p_end
+                p_end = actual_stop_page - 1
+                for next_n in range(part_n + 1, expected_part_count + 2):
+                    if next_n in parts_found:
+                        p_end = parts_found[next_n] - 1
+                        break
+                        
+                if p_end < p_start:
+                    p_end = p_start
+                    
+                pages = list(range(p_start, p_end + 1))
+                layout = _default_layout_for_page_count(len(pages))
+                part_list.append({
+                    "part": part_n,
+                    "title": f"Part {part_n}",
+                    "pages": pages,
+                    "layout": layout
+                })
+            else:
+                warnings.append(f"Test {t_num} thiếu Part {part_n}. Cần kiểm tra lại.")
+        
+        tests_out.append({
+            "test": t_num,
+            "start_page": start_page,
+            "end_page": actual_stop_page - 1,
+            "parts": part_list,
+            "confidence": 100.0 if len(part_list) == expected_part_count else 50.0,
+            "warnings": [w for w in warnings if f"Test {t_num}" in w]
+        })
+        if log_callback:
+            log_callback(f"Đã detect Test {t_num} (Trang {start_page} - {actual_stop_page - 1}), Parts: {len(part_list)}/{expected_part_count}", "info")
+
+    book_index = {
+        "pdf_name": pdf_path_obj.name,
+        "pdf_hash": file_hash,
+        "level": level,
+        "created_at": datetime.now().isoformat(),
+        "tests": tests_out
+    }
+    
+    with cache_file.open('w', encoding='utf-8') as f:
+        json.dump(book_index, f, indent=2, ensure_ascii=False)
+        
+    # Phase 3: Export Debug
+    debug_path = Path(output_dir) / "book_index_debug.json"
+    debug_data = []
+    for p in text_pages:
+        debug_data.append({
+            "page": p["page"],
+            "text_source": p.get("text_source", ""),
+            "anchors": p.get("anchors", []),
+            "heading_snippet": p.get("merged_heading", "")[:200].replace("\n", " "),
+            "merged_snippet": p.get("merged_text", "")[:500].replace("\n", " ")
+        })
+    with open(debug_path, "w", encoding="utf-8") as f:
+        json.dump(debug_data, f, indent=2, ensure_ascii=False)
+        
+    return book_index, warnings
 
 
 def auto_detect_page_map_from_pdf(
@@ -967,7 +1299,7 @@ def read_pairing_csv(pairing_csv: str | Path, output_dir: Optional[str | Path] =
 
 
 def infer_test_number_from_name(name: str, default: int = 1) -> int:
-    match = re.search(r"\btest\s*([123])\b", name, flags=re.IGNORECASE)
+    match = re.search(r"\btest\s*(\d{1,2})\b", name, flags=re.IGNORECASE)
     if match:
         return int(match.group(1))
     return default
@@ -1281,6 +1613,8 @@ def detect_timestamps_from_audio_provider(
     whisper_model: str = "small",
     language: str = "en",
     gemini_models_input: str = "",
+    progress_callback=None,
+    log_callback=None,
 ) -> Tuple[List[dict], List[str]]:
     
     audio_duration = get_audio_duration(audio_path)
@@ -2239,21 +2573,24 @@ def process_batch(
     batch_report: Optional[str | Path] = None,
     printed_start_page: Optional[int] = None,
     use_gpu: bool = False,
+    progress_ui = None,
 ) -> List[dict]:
     results: List[dict] = []
     csv_root = Path(detected_csv_dir) if detected_csv_dir else None
     if csv_root:
         csv_root.mkdir(parents=True, exist_ok=True)
 
-    for pair in pairs:
+    for idx, pair in enumerate(pairs):
         base_name = pair["base_name"]
+        if progress_ui:
+            progress_ui.progress(f"Đang xử lý {base_name} ({idx+1}/{len(pairs)})", idx / len(pairs))
+            progress_ui.log(f"--- Bắt đầu job {idx+1}: {base_name} ---")
+            
         result = dict(pair)
         result["status"] = "processing"
         result["duration"] = ""
         result["detected_csv"] = ""
         try:
-            LOGGER.info("[%s] matched", base_name)
-            LOGGER.info("[%s] processing", base_name)
             if Path(pair["output_path"]).exists() and not overwrite and not csv_only:
                 raise FileExistsError(f"Output exists and --overwrite was not set: {pair['output_path']}")
             active_test_number = pair.get("test_number")
@@ -2263,57 +2600,99 @@ def process_batch(
             active_page_map_config = pair.get("page_map_config") or page_map_config
             if not active_page_map_config and pair.get("page_map_path"):
                 active_page_map_config = load_page_map_config(pair["page_map_path"])
-            pair_ocr_start = pair.get("ocr_start_page") or ocr_start_page
-            pair_ocr_end = pair.get("ocr_end_page") or ocr_end_page
-            pair_printed_start = pair.get("printed_start_page") or printed_start_page
-            should_auto_page_map = auto_page_map or (
-                not active_page_map_config and pair.get("ocr_start_page") and pair.get("ocr_end_page")
-            )
-            if should_auto_page_map:
-                page_map_output_dir = csv_root or Path(pair["output_path"]).parent
-                active_page_map_config, page_map_warnings, _ocr_results = auto_detect_page_map_from_pdf(
+            
+            # --- Page Map Logic (Book Index Priority) ---
+            if not active_page_map_config:
+                if progress_ui: progress_ui.log(f"[{base_name}] Quét Book Index...")
+                # 1. Try to get it from book index cache
+                idx_data, _ = build_book_index_from_pdf(
                     pdf_path=pair["pdf_path"],
-                    output_dir=page_map_output_dir,
+                    output_dir=csv_root or Path(pair["output_path"]).parent,
                     level=active_level,
-                    test_number=active_test_number,
-                    render_scale=ocr_render_scale,
-                    start_page=pair_ocr_start,
-                    end_page=pair_ocr_end,
-                    ocr_engine=ocr_engine,
-                    ocr_language=ocr_language,
-                    min_confidence=ocr_min_confidence,
-                    printed_start_page=pair_printed_start,
+                    use_ocr_fallback=True
                 )
-                page_map_json = page_map_output_dir / f"{base_name}_detected_page_map.json"
-                export_page_map_config(active_page_map_config, page_map_json)
-                result["page_map_json"] = page_map_json
-                for warning in page_map_warnings:
-                    LOGGER.warning("[%s] Page map warning: %s", base_name, warning)
+                
+                # Find matching test
+                for t in idx_data.get("tests", []):
+                    if t["test"] == active_test_number:
+                        active_page_map_config = {"level": active_level, "test": active_test_number, "parts": t["parts"]}
+                        if progress_ui: progress_ui.log(f"[{base_name}] Tìm thấy Test {active_test_number} trong Book Index")
+                        break
+                        
+                # 2. Fallback to pairing.csv or manual auto_page_map
+                if not active_page_map_config and auto_page_map:
+                    if progress_ui: progress_ui.log(f"[{base_name}] Không có trong Book Index, dùng OCR Fallback...")
+                    page_map_output_dir = csv_root or Path(pair["output_path"]).parent
+                    
+                    # Derive range
+                    pair_ocr_start = pair.get("ocr_start_page")
+                    pair_ocr_end = pair.get("ocr_end_page")
+                    if pair_ocr_start is None or pair_ocr_end is None:
+                        # Derive from preset if possible (inline to avoid circular import)
+                        try:
+                            preset = get_preset_page_map(active_level, active_test_number)
+                            all_pages = []
+                            if preset and "parts" in preset:
+                                for part in preset["parts"]:
+                                    if "pages" in part:
+                                        all_pages.extend(part["pages"])
+                            if all_pages:
+                                ds, de = max(1, min(all_pages) - 2), max(all_pages) + 6
+                            else:
+                                ds, de = 1, 20
+                        except Exception:
+                            ds, de = 1, 20
+                        pair_ocr_start = pair_ocr_start or ds
+                        pair_ocr_end = pair_ocr_end or de
+                        
+                    active_page_map_config, page_map_warnings, _ = auto_detect_page_map_from_pdf(
+                        pdf_path=pair["pdf_path"],
+                        output_dir=page_map_output_dir,
+                        level=active_level,
+                        test_number=active_test_number,
+                        render_scale=ocr_render_scale,
+                        start_page=pair_ocr_start,
+                        end_page=pair_ocr_end,
+                        ocr_engine=ocr_engine,
+                        ocr_language=ocr_language,
+                        min_confidence=ocr_min_confidence,
+                    )
+                    
+            if not active_page_map_config:
+                raise ValueError("Không thể xác định page map. Vui lòng review cấu hình.")
+                
             audio_duration = get_audio_duration(pair["audio_path"])
             result["duration"] = f"{audio_duration:.3f}"
-            rows, warnings = detect_timestamps_from_audio(
-                pair["audio_path"],
-                active_test_number,
-                whisper_model,
-                language,
-                level=active_level,
+            
+            if progress_ui: progress_ui.log(f"[{base_name}] Nhận diện timestamps...")
+            rows, warnings = detect_timestamps_from_audio_provider(
+                audio_path=pair["audio_path"],
                 page_map_config=active_page_map_config,
+                provider="whisper" if whisper_model else "gemini",
+                whisper_model=whisper_model,
+                language=language,
+                progress_callback=progress_ui.progress if progress_ui else None,
+                log_callback=progress_ui.log if progress_ui else None
             )
             result["status"] = "timestamp detected"
             result["warnings"] = warnings
             for warning in warnings:
                 LOGGER.warning("[%s] Warning: %s", base_name, warning)
+                
             csv_path = (csv_root or Path(pair["output_path"]).parent) / f"{base_name}_detected_timestamps.csv"
             export_detected_timestamps(rows, csv_path)
             result["detected_csv"] = csv_path
+            
             has_invalid_duration = any(float(row["end_seconds"]) <= float(row["start_seconds"]) for row in rows)
             if has_invalid_duration:
                 raise ValueError(f"Detected timestamps need manual review: {csv_path}")
+                
             if csv_only:
                 LOGGER.info("[%s] csv-only complete: %s", base_name, csv_path)
+                if progress_ui: progress_ui.log(f"[{base_name}] Hoàn tất xuất CSV")
             else:
                 result["status"] = "rendering"
-                LOGGER.info("[%s] rendering", base_name)
+                if progress_ui: progress_ui.log(f"[{base_name}] Xuất video...")
                 create_video(
                     pdf_path=pair["pdf_path"],
                     audio_path=pair["audio_path"],
@@ -2328,14 +2707,19 @@ def process_batch(
                     transition_duration=transition_duration,
                     watermark_options=watermark_options,
                     use_gpu=use_gpu,
+                    progress_callback=progress_ui.progress if progress_ui else None,
+                    log_callback=progress_ui.log if progress_ui else None
                 )
                 result["status"] = "exported"
-                LOGGER.info("[%s] exported: %s", base_name, pair["output_path"])
+                if progress_ui: progress_ui.log(f"[{base_name}] Hoàn tất video")
         except Exception as exc:
             result["status"] = "failed"
             result["error"] = str(exc)
-            LOGGER.error("[%s] failed: %s", base_name, exc)
+            import traceback
+            traceback.print_exc()
+            if progress_ui: progress_ui.log(f"[{base_name}] Lỗi: {exc}", "error")
         results.append(result)
+        
     if batch_report:
         export_batch_report(results, batch_report)
     return results
@@ -2365,7 +2749,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--printed-start-page", type=int, help="Printed page number of Part 1 for offset calculation.")
     parser.add_argument("--ocr-render-scale", type=float, default=2.0, help="PDF render scale for OCR.")
     parser.add_argument("--ocr-min-confidence", type=float, default=55.0, help="Warn below this average OCR confidence.")
-    parser.add_argument("--test", type=int, choices=[1, 2, 3], default=1, help="Test number for default page map.")
+    parser.add_argument("--test", type=int, default=1, help="Test number for default page map (fallback).")
     parser.add_argument("--infer-test-from-name", action="store_true", default=True, help="Batch mode: infer Test 1/2/3 from filename.")
     parser.add_argument("--no-infer-test-from-name", dest="infer_test_from_name", action="store_false")
     parser.add_argument("--auto-timestamp", action="store_true", help="Detect part timestamps with local faster-whisper.")

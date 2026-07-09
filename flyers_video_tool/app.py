@@ -2,6 +2,39 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
+import json
+import time
+class StreamlitTaskUI:
+    def __init__(self, title):
+        self.status = st.status(title, expanded=True)
+        self.progress_bar = self.status.progress(0.0)
+        self.pct_text = self.status.empty()
+        self.log_container = self.status.container()
+        self.logs = []
+        self.pct_text.write("0%")
+
+    def progress(self, message: str, progress: float, eta_seconds=None, detail=None):
+        pct = int(progress * 100)
+        self.progress_bar.progress(progress)
+        self.pct_text.write(f"{pct}% - {message}")
+        
+    def log(self, message: str, level: str = "info"):
+        from datetime import datetime
+        now = datetime.now().strftime("%H:%M:%S")
+        self.logs.append(f"[{now}] {message}")
+        if len(self.logs) > 10:
+            self.logs.pop(0)
+        self.log_container.code("\n".join(self.logs), language="log")
+        
+    def complete(self, message="Hoàn tất"):
+        self.progress_bar.progress(1.0)
+        self.pct_text.write(f"100% - {message}")
+        self.status.update(label=message, state="complete", expanded=False)
+        
+    def fail(self, message="Thất bại"):
+        self.pct_text.write(f"Lỗi: {message}")
+        self.status.update(label=message, state="error", expanded=True)
+
 import streamlit as st
 try:
     from history import load_export_history, delete_export, clear_all_exports, generate_unique_filename, register_export
@@ -10,6 +43,8 @@ except ImportError:
 
 try:
     from flyers_video_tool import (
+    build_book_index_from_pdf,
+    compute_file_hash,
         auto_detect_page_map_from_pdf,
         create_video,
         detect_part_timestamps,
@@ -181,7 +216,7 @@ def clean_timestamp_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def dataframe_to_rows(dataframe: pd.DataFrame):
     cleaned_df = clean_timestamp_dataframe(dataframe)
     if cleaned_df.empty:
-        raise ValueError("Bảng thời gian đang trống. Hãy bấm Tự nhận diện đề + thời gian hoặc nhập thời gian thủ công.")
+        raise ValueError("Bảng thời gian đang trống. Hãy bấm Nhận diện thời gian (Timestamps) hoặc nhập thời gian thủ công.")
     csv_path = session_dir() / "edited_timestamps.csv"
     cleaned_df[["title", "start", "end", "pdf_pages", "layout"]].to_csv(csv_path, index=False)
     return parse_timestamps_csv(csv_path)
@@ -204,6 +239,9 @@ def page_map_to_dataframe(config: dict):
 
 
 def page_map_dataframe_to_config(dataframe: pd.DataFrame, level: str, test_number: int, pdf_offset: Optional[int] = None):
+    if "Số trang PDF thực tế" not in dataframe.columns or "Part" not in dataframe.columns:
+        raise ValueError(f"Internal error: page_map_df has wrong columns. Expected page map columns, got: {list(dataframe.columns)}")
+        
     parts = []
     for _, row in dataframe.iterrows():
         pages = [int(value.strip()) for value in str(row["Số trang PDF thực tế"]).replace(";", ",").split(",") if value.strip() and value.strip() != "nan"]
@@ -458,25 +496,109 @@ if app_mode == "Tạo 1 Video":
         level = st.selectbox("Cấp độ", ["starters", "movers", "flyers"], index=2, key="single_level")
     with col2:
         audio_file = st.file_uploader("File Audio nghe (MP3)", type=["mp3", "wav", "m4a"], key="single_audio")
-        test_number = st.selectbox("Bài Test số", [1, 2, 3], index=0, key="single_test")
         
     current_pdf_name = pdf_file.name if pdf_file else None
     current_audio_name = audio_file.name if audio_file else None
     
-    if (st.session_state.get("prev_level") != level or
-        st.session_state.get("prev_test") != test_number or
-        st.session_state.get("prev_pdf") != current_pdf_name or
-        st.session_state.get("prev_audio") != current_audio_name):
+    if (st.session_state.get("prev_pdf") != current_pdf_name or st.session_state.get("prev_level") != level):
+        if "book_index" in st.session_state: del st.session_state["book_index"]
+        if "page_map_df" in st.session_state: del st.session_state["page_map_df"]
+        if "timestamp_df" in st.session_state: del st.session_state["timestamp_df"]
+    
+    if st.session_state.get("prev_audio") != current_audio_name:
+        if "timestamp_df" in st.session_state: del st.session_state["timestamp_df"]
         
-        keys_to_clear = ["page_map_df", "timestamp_df", "timestamps_detected", "page_map_changed_since_timestamp"]
-        for k in keys_to_clear:
-            if k in st.session_state:
-                del st.session_state[k]
+    st.session_state["prev_pdf"] = current_pdf_name
+    st.session_state["prev_audio"] = current_audio_name
+    st.session_state["prev_level"] = level
+    
+    # --- BOOK INDEX SECTION ---
+    if pdf_file:
+        pdf_path = save_upload(pdf_file)
+        
+        col_scan, col_clear = st.columns([2, 1])
+        with col_scan:
+            scan_clicked = st.button("Quét Book Index từ PDF", type="secondary")
+        with col_clear:
+            if st.button("Xóa cache Book Index / Quét lại từ đầu"):
+                if "book_index" in st.session_state: del st.session_state["book_index"]
+                from flyers_video_tool import compute_file_hash, BOOK_INDEX_CACHE_VERSION
+                file_hash = compute_file_hash(pdf_path)
+                cache_file = Path(".flyers_cache") / "book_indexes" / f"{file_hash}_{level}_v{BOOK_INDEX_CACHE_VERSION}.json"
+                if cache_file.exists():
+                    cache_file.unlink()
+                st.success("Đã xóa cache Book Index!")
+                st.rerun()
+
+        if scan_clicked:
+            ui = StreamlitTaskUI("Đang quét Book Index...")
+            try:
+                index_data, warnings = build_book_index_from_pdf(
+                    pdf_path=pdf_path,
+                    output_dir=session_dir(),
+                    level=level,
+                    progress_callback=ui.progress,
+                    log_callback=ui.log
+                )
+                st.session_state["book_index"] = index_data
+                ui.complete(f"Đã quét xong Book Index ({len(index_data.get('tests', []))} tests)")
+                if warnings:
+                    for w in warnings:
+                        st.warning(w)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                ui.fail(f"Lỗi: {e}")
                 
-        st.session_state["prev_level"] = level
+    if "book_index" in st.session_state and st.session_state["book_index"].get("tests"):
+        idx_data = st.session_state["book_index"]
+        st.success(f"Book Index: Đã nạp thành công {len(idx_data['tests'])} tests.")
+        
+        # Build dataframe for display
+        table_rows = []
+        for t in idx_data["tests"]:
+            row = {
+                "Test": t["test"],
+                "PDF Range": f"{t['start_page']}-{t['end_page']}",
+                "Status": "OK" if t["confidence"] > 90 else "Review"
+            }
+            for p in t["parts"]:
+                row[f"Part {p['part']}"] = ",".join(map(str, p["pages"]))
+            table_rows.append(row)
+        
+        st.session_state.book_index_df = pd.DataFrame(table_rows)
+        st.dataframe(st.session_state.book_index_df, use_container_width=True)
+        
+        test_options = [t["test"] for t in idx_data["tests"]]
+        test_number = st.selectbox("Chọn Test để xử lý", test_options, key="single_test")
+        
+        if st.session_state.get("prev_test") != test_number:
+            if "timestamp_df" in st.session_state: del st.session_state["timestamp_df"]
+            st.session_state.timestamps_detected = False
+            st.session_state.page_map_changed_since_timestamp = False
+            
+            # Auto load page map for this test properly
+            for t in idx_data["tests"]:
+                if t["test"] == test_number:
+                    page_map_config = {
+                        "level": level,
+                        "test": test_number,
+                        "parts": t["parts"]
+                    }
+                    st.session_state.page_map_df = page_map_to_dataframe(page_map_config)
+                    break
         st.session_state["prev_test"] = test_number
-        st.session_state["prev_pdf"] = current_pdf_name
-        st.session_state["prev_audio"] = current_audio_name
+        
+    else:
+        st.info("Chưa có Book Index. Bạn có thể quét tự động ở trên, hoặc dùng chế độ thủ công bên dưới.")
+        test_number = st.number_input("Bài Test số (Thủ công)", min_value=1, max_value=50, value=1, step=1, key="single_test_manual")
+        if st.session_state.get("prev_test_manual") != test_number:
+            if "timestamp_df" in st.session_state: del st.session_state["timestamp_df"]
+            if "page_map_df" in st.session_state: del st.session_state["page_map_df"]
+        st.session_state["prev_test_manual"] = test_number
+
+    
+
 
         
     with st.expander("Cài đặt nâng cao (Nhận diện)"):
@@ -497,7 +619,7 @@ if app_mode == "Tạo 1 Video":
         language = st.text_input("Ngôn ngữ Whisper", value="en", key="single_language")
 
     st.header("Bước 2: Tự động nhận diện")
-    detect_clicked = st.button("Tự nhận diện đề + thời gian", type="primary", width='stretch')
+    detect_clicked = st.button("Nhận diện thời gian (Timestamps)", type="primary", width='stretch')
 
     if page_map_upload is not None:
         page_map_path = save_upload(page_map_upload, "page_maps")
@@ -535,7 +657,7 @@ if app_mode == "Tạo 1 Video":
                         test_number=test_number,
                         start_page=int(ocr_scan_start_page),
                         end_page=int(ocr_scan_end_page),
-                        printed_start_page=int(printed_start_page),
+                printed_start_page=int(printed_start_page),
                     )
                     st.session_state.page_map_df = page_map_to_dataframe(detected_config)
                     st.session_state.page_map_level = level
@@ -610,7 +732,7 @@ if app_mode == "Tạo 1 Video":
     )
     
     if not st.session_state.get("timestamps_detected", False):
-        st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Tự nhận diện đề + thời gian' trước khi xuất video.")
+        st.warning("Đây là các mốc thời gian mẫu (placeholder). Hãy chạy 'Nhận diện thời gian (Timestamps)' trước khi xuất video.")
 
     with st.expander("Chỉnh sửa dữ liệu thủ công (Nâng cao)"):
         st.write("Cấu hình Bản đồ trang PDF:")
@@ -768,7 +890,7 @@ elif app_mode == "Xử lý hàng loạt":
 
     pairing_upload = st.file_uploader("File ghép cặp (pairing.csv) tuỳ chọn", type=["csv"], key="batch_pairing_csv")
     batch_level = st.selectbox("Cấp độ mặc định", ["starters", "movers", "flyers"], index=2, key="batch_level")
-    batch_test = st.selectbox("Bài Test mặc định", [1, 2, 3], index=0, key="batch_test")
+    batch_test = st.number_input("Bài Test mặc định", min_value=1, max_value=50, value=1, step=1, key="batch_test")
     output_dir = session_dir() / "batch_outputs"
     
     with st.expander("Cài đặt nâng cao (Batch)"):
@@ -831,30 +953,31 @@ elif app_mode == "Xử lý hàng loạt":
         )
 
         if st.button("Bắt đầu xử lý hàng loạt", type="primary", width='stretch'):
-            with st.status("Đang xử lý hàng loạt...", expanded=True) as status:
-                batch_page_map_config = None
-                if batch_page_map_upload is not None:
-                    batch_page_map_config = load_page_map_config(save_upload(batch_page_map_upload, "batch_uploads"))
-                results = process_batch(
-                    pairs,
-                    level=batch_level,
-                    test_number=batch_test,
-                    infer_test_number=infer_test,
-                    whisper_model=batch_model,
-                    language=batch_language,
-                    detected_csv_dir=output_dir,
-                    csv_only=csv_only,
-                    overwrite=overwrite,
-                    batch_report=output_dir / "batch_report.csv",
-                    page_map_config=batch_page_map_config,
-                    auto_page_map=batch_auto_page_map,
-                    printed_start_page=int(batch_printed_start),
-                    ocr_start_page=int(batch_ocr_start),
-                    ocr_end_page=int(batch_ocr_end),
-                    **batch_options,
-                )
-                st.session_state.batch_results = results
-                status.update(label="Xử lý hàng loạt hoàn tất", state="complete")
+            ui = StreamlitTaskUI("Đang xử lý hàng loạt...")
+            batch_page_map_config = None
+            if batch_page_map_upload is not None:
+                batch_page_map_config = load_page_map_config(save_upload(batch_page_map_upload, "batch_uploads"))
+            results = process_batch(
+                pairs,
+                progress_ui=ui,
+                level=batch_level,
+                test_number=batch_test,
+                infer_test_number=infer_test,
+                whisper_model=batch_model,
+                language=batch_language,
+                detected_csv_dir=output_dir,
+                csv_only=csv_only,
+                overwrite=overwrite,
+                batch_report=output_dir / "batch_report.csv",
+                page_map_config=batch_page_map_config,
+                auto_page_map=batch_auto_page_map,
+                printed_start_page=int(batch_printed_start),
+                ocr_start_page=int(batch_ocr_start),
+                ocr_end_page=int(batch_ocr_end),
+                **batch_options,
+            )
+            st.session_state.batch_results = results
+            ui.complete("Xử lý hàng loạt hoàn tất")
 
     if "batch_results" in st.session_state:
         results = st.session_state.batch_results
