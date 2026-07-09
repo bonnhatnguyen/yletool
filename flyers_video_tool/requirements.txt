@@ -6,3 +6,4 @@ pandas
 pillow
 streamlit
 pytesseract
+audioop-lts
