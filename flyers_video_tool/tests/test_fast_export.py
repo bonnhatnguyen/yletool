@@ -113,6 +113,16 @@ def test_fast_static_creates_concat_file_and_fallbacks(
     assert "-tune" in mock_run.call_args_list[2][0][0]
     assert "stillimage" in mock_run.call_args_list[2][0][0]
     
+    # Verify command line arguments
+    libx264_cmd = mock_run.call_args_list[2][0][0]
+    assert "-shortest" not in libx264_cmd
+    assert "-t" in libx264_cmd
+    assert "10.000" in libx264_cmd
+    
+    # Check for tpad filter
+    vf_idx = libx264_cmd.index("-vf")
+    assert "tpad=stop_mode=clone" in libx264_cmd[vf_idx + 1]
+
     # Check shutil.move was called once
     mock_replace.assert_called_once()
     
@@ -317,3 +327,14 @@ def test_validate_or_repair_output_duration_audio_wrong():
         valid, msg = validate_or_repair_output_duration(Path('dummy.mp4'), 10.0, 1, 'libx264')
         assert not valid
         assert 'Validation failed: Audio stream length mismatch' in msg
+
+def test_validate_or_repair_output_duration_audio_truncated():
+    from flyers_video_tool.flyers_video_tool import validate_or_repair_output_duration
+    with patch('flyers_video_tool.flyers_video_tool.get_format_duration') as mock_fmt, \
+         patch('flyers_video_tool.flyers_video_tool.get_stream_durations') as mock_stream:
+        mock_fmt.return_value = 5.0
+        mock_stream.return_value = (None, 5.0)
+        
+        valid, msg = validate_or_repair_output_duration(Path('dummy.mp4'), 100.0, 1, 'libx264')
+        assert not valid
+        assert 'Validation failed: Output was truncated' in msg

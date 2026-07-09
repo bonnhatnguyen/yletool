@@ -736,7 +736,10 @@ def validate_or_repair_output_duration(
     if output_audio_duration is not None:
         if audio_delta > 1.0:
             valid = False
-            reject_reason = f"Audio stream length mismatch (diff: {audio_delta:.3f}s > 1.0s)"
+            if output_audio_duration < target_audio_duration - 1.0:
+                reject_reason = f"Output was truncated. The FFmpeg concat video stream ended before audio. Check concat.txt and remove -shortest / add tpad. (diff: {audio_delta:.3f}s)"
+            else:
+                reject_reason = f"Audio stream length mismatch (diff: {audio_delta:.3f}s > 1.0s)"
         else:
             # Audio is correct, check format/video extra
             max_extra = max(format_extra or 0, video_extra or 0)
@@ -2009,6 +2012,7 @@ def create_video(
             available_encoders = _get_available_h264_encoders(use_gpu=use_gpu)
             
             concat_txt_path = work_dir / "concat.txt"
+            LOGGER.info(f"Writing concat.txt with durations: {durations}")
             with open(concat_txt_path, "w", encoding="utf-8") as f:
                 for idx, duration in enumerate(durations):
                     scene_path = scene_paths[idx]
@@ -2047,10 +2051,8 @@ def create_video(
                 
                 import os
                 ffmpeg_cmd.extend([
-                    "-r", str(fps),
-                    "-pix_fmt", "yuv420p",
+                    "-vf", f"tpad=stop_mode=clone:stop_duration={audio_duration:.3f},fps={fps},format=yuv420p",
                     "-c:a", "aac", "-b:a", "128k",
-                    "-shortest",
                     "-t", f"{audio_duration:.3f}",
                     str(temp_output)
                 ])
@@ -2069,6 +2071,10 @@ def create_video(
                     if not valid:
                         LOGGER.error(f"Duration validation failed for {encoder}:\n{msg}")
                         last_error = msg
+                        # Copy concat.txt to debug
+                        debug_concat = work_dir / f"concat_failed_{encoder}.txt"
+                        shutil.copy2(concat_txt_path, debug_concat)
+                        
                         if temp_output.exists():
                             temp_output.unlink()
                         continue
