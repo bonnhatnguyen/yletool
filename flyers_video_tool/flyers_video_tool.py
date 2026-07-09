@@ -783,6 +783,17 @@ def transcribe_audio(
     if not path.exists():
         raise FileNotFoundError(f"Audio file not found: {path}")
     try:
+        import os
+        if os.name == "nt":
+            import glob
+            import sys
+            site_packages = next((p for p in sys.path if "site-packages" in p), None)
+            if site_packages:
+                for lib in glob.glob(f"{site_packages}/nvidia/*/bin"):
+                    try:
+                        os.add_dll_directory(lib)
+                    except Exception:
+                        pass
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise RuntimeError(

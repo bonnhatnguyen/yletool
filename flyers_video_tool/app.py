@@ -208,7 +208,7 @@ with single_tab:
             ocr_scan_start_page = st.number_input("Trang PDF bắt đầu quét (OCR)", min_value=1, value=1, step=1, key="single_ocr_start")
         with range_cols[2]:
             ocr_scan_end_page = st.number_input("Trang PDF kết thúc quét (OCR)", min_value=1, value=20, step=1, key="single_ocr_end")
-        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", use_container_width=True)
+        auto_page_map_clicked = st.button("Tự động nhận diện trang PDF (OCR)", width='stretch')
         whisper_model = st.text_input("Mô hình Whisper", value="small", key="single_model")
         language = st.text_input("Ngôn ngữ", value="en", key="single_language")
 
@@ -272,7 +272,7 @@ with single_tab:
         with recompute_col:
             st.write("") # spacer
             st.write("") # spacer
-            recompute_clicked = st.button("Tính lại toàn bộ trang PDF theo Độ lệch (Offset)", use_container_width=True)
+            recompute_clicked = st.button("Tính lại toàn bộ trang PDF theo Độ lệch (Offset)", width='stretch')
             
         if recompute_clicked or new_offset != current_offset:
             st.session_state.pdf_offset = new_offset
@@ -288,7 +288,7 @@ with single_tab:
         edited_page_map_df = st.data_editor(
             st.session_state.page_map_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "Part": st.column_config.NumberColumn("Part", min_value=1, step=1, required=True),
                 "Tiêu đề": st.column_config.TextColumn("Tiêu đề", required=True),
@@ -319,9 +319,9 @@ with single_tab:
 
     controls = st.columns(3)
     with controls[0]:
-        detect_clicked = st.button("Tự động nhận diện thời gian (Timestamps)", type="primary", use_container_width=True)
+        detect_clicked = st.button("Tự động nhận diện thời gian (Timestamps)", type="primary", width='stretch')
     with controls[1]:
-        reset_clicked = st.button("Đặt lại bảng", use_container_width=True)
+        reset_clicked = st.button("Đặt lại bảng", width='stretch')
     with controls[2]:
         csv_upload = st.file_uploader("Tải lên file CSV thời gian", type=["csv"], label_visibility="collapsed")
 
@@ -362,7 +362,7 @@ with single_tab:
     edited_df = st.data_editor(
         st.session_state.timestamp_df,
         num_rows="dynamic",
-        use_container_width=True,
+        width='stretch',
         column_config={
             "title": st.column_config.TextColumn("title", required=True),
             "start": st.column_config.TextColumn("start", help="MM:SS or HH:MM:SS"),
@@ -449,7 +449,7 @@ with batch_tab:
     batch_options = shared_render_options("batch")
     batch_gap = st.number_input("Khoảng trống giữa 2 trang sách", min_value=0, max_value=200, value=24, step=2, key="batch_gap")
 
-    if st.button("Kiểm tra ghép nối file", use_container_width=True):
+    if st.button("Kiểm tra ghép nối file", width='stretch'):
         try:
             if pairing_upload is not None:
                 pairing_path = save_upload(pairing_upload, "batch_uploads")
@@ -487,11 +487,11 @@ with batch_tab:
                     for pair in pairs
                 ]
             ),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
-        if st.button("Bắt đầu xử lý hàng loạt", type="primary", use_container_width=True):
+        if st.button("Bắt đầu xử lý hàng loạt", type="primary", width='stretch'):
             with st.status("Đang xử lý hàng loạt...", expanded=True) as status:
                 batch_page_map_config = None
                 if batch_page_map_upload is not None:
@@ -533,7 +533,7 @@ with batch_tab:
                     for result in results
                 ]
             ),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
         for result in results:
