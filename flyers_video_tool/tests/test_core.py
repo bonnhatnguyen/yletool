@@ -238,6 +238,21 @@ class BatchMatchingTest(unittest.TestCase):
         self.assertEqual(pairs[0]["ocr_start_page"], 5)
         self.assertEqual(pairs[0]["ocr_end_page"], 12)
 
+    def test_pairing_csv_accepts_printed_part1_page_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "book.pdf").write_bytes(b"%PDF")
+            (root / "audio.mp3").write_bytes(b"audio")
+            pairing = root / "pairing.csv"
+            with pairing.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["pdf", "audio", "output_name", "printed_part1_page"])
+                writer.writerow(["book.pdf", "audio.mp3", "Printed Alias", "4"])
+
+            pairs = read_pairing_csv(pairing, output_dir=root / "out")
+
+        self.assertEqual(pairs[0]["printed_start_page"], 4)
+
 
 class PageMapConfigTest(unittest.TestCase):
     def test_loads_page_map_json(self):
@@ -324,6 +339,27 @@ class AutoPageMapTest(unittest.TestCase):
         self.assertEqual([part["part"] for part in config["parts"]], [1, 2, 3, 4])
         self.assertEqual(config["parts"][2]["pages"], [7, 8])
         self.assertFalse(any("Part 1 at page 8" in warning for warning in warnings))
+
+    def test_auto_page_map_calculates_pdf_offset_from_printed_part1_alias(self):
+        ocr_results = [
+            {"page": 5, "heading_text": "Test 1 Listening Part 1", "text": "Part 1", "confidence": 92},
+            {"page": 6, "heading_text": "Part 2", "text": "Part 2", "confidence": 90},
+            {"page": 7, "heading_text": "Part 3", "text": "Part 3", "confidence": 90},
+            {"page": 8, "heading_text": "Part 4", "text": "Part 4", "confidence": 90},
+            {"page": 9, "heading_text": "Answer key", "text": "Answer key", "confidence": 95},
+        ]
+
+        config, warnings = build_page_map_from_ocr_results(
+            ocr_results,
+            level="starters",
+            test_number=1,
+            printed_part1_page=4,
+        )
+
+        self.assertEqual(config["pdf_offset"], 1)
+        self.assertEqual(config["parts"][0]["printed_pages"], [4])
+        self.assertEqual(config["parts"][0]["pages"], [5])
+        self.assertEqual(warnings, [])
 
 
 class BatchReportTest(unittest.TestCase):

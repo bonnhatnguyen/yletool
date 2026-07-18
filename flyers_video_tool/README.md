@@ -96,17 +96,20 @@ Vi du Flyers:
 {
   "level": "flyers",
   "test": 1,
+  "pdf_offset": 1,
   "parts": [
-    {"part": 1, "title": "Part 1", "pages": [5], "layout": "single"},
-    {"part": 2, "title": "Part 2", "pages": [6], "layout": "single"},
-    {"part": 3, "title": "Part 3", "pages": [7, 8], "layout": "side_by_side"},
-    {"part": 4, "title": "Part 4", "pages": [9, 10], "layout": "side_by_side"},
-    {"part": 5, "title": "Part 5", "pages": [11], "layout": "single"}
+    {"part": 1, "title": "Part 1", "printed_pages": [4], "pages": [5], "layout": "single"},
+    {"part": 2, "title": "Part 2", "printed_pages": [5], "pages": [6], "layout": "single"},
+    {"part": 3, "title": "Part 3", "printed_pages": [6, 7], "pages": [7, 8], "layout": "side_by_side"},
+    {"part": 4, "title": "Part 4", "printed_pages": [8, 9], "pages": [9, 10], "layout": "side_by_side"},
+    {"part": 5, "title": "Part 5", "printed_pages": [10], "pages": [11], "layout": "single"}
   ]
 }
 ```
 
 Vi du Starters 4 parts nam tai `examples/starters_test1_page_map.json`.
+
+`printed_pages` la so trang in trong sach hoac muc luc, chi de tham khao/hien thi. `pages` la PDF page that, bat dau tu 1, va la gia tri duy nhat dung de render video. Khong duoc gia dinh `printed_pages = pages`; moi PDF co the co offset khac nhau. `pdf_offset = pdf_page_of_part_1 - printed_page_of_part_1` neu biet trang in cua Part 1.
 
 Layout:
 
@@ -131,7 +134,8 @@ python flyers_video_tool.py `
   --page-map-only `
   --page-map-output "detected_page_map.json" `
   --ocr-start-page 5 `
-  --ocr-end-page 12
+  --ocr-end-page 12 `
+  --printed-part1-page 4
 ```
 
 Co the dung alias:
@@ -159,6 +163,8 @@ python flyers_video_tool.py `
 Neu OCR khong chac chan, tool van xuat JSON draft va warning. Mo JSON hoac bang page map trong UI de sua truoc khi export.
 
 OCR uu tien text nam o vung dau trang (`heading_text`) va bo qua trang co dau hieu `Transcript`, `Audioscript`, `Answer key`, `Answers`, `Tapescript`. Neu co nhieu trang cung co `Part 1`, `Part 2`, tool chi chon chuoi Part tang dan theo thu tu trang; neu thieu Part se warning de sua thu cong.
+
+Co the dung `--printed-start-page` hoac alias `--printed-part1-page` de tool tinh `pdf_offset` tu PDF page that cua Part 1 sau OCR. Streamlit UI hien thi ca "So trang sach (in)" va "So trang PDF thuc te"; render chi dua tren PDF page that.
 
 Test 1 Listening:
 
@@ -325,9 +331,9 @@ Neu ten PDF va audio khong giong nhau, dung `--pairing-csv`. Khi co option nay, 
 Format `pairing.csv`:
 
 ```csv
-pdf,audio,output_name,level,test,page_map,ocr_start_page,ocr_end_page
-Starters Test 1.pdf,Starters Test 1.mp3,Starters Test 1,starters,1,examples/starters_test1_page_map.json,,
-Flyers Test 1.pdf,Flyers Test 1.mp3,Flyers Test 1,flyers,1,,5,12
+pdf,audio,output_name,level,test,page_map,ocr_start_page,ocr_end_page,printed_part1_page
+Starters Test 1.pdf,Starters Test 1.mp3,Starters Test 1,starters,1,examples/starters_test1_page_map.json,,,
+Flyers Test 1.pdf,Flyers Test 1.mp3,Flyers Test 1,flyers,1,,5,12,4
 ```
 
 Chay:
@@ -344,6 +350,7 @@ python flyers_video_tool.py `
 Duong dan `pdf` va `audio` trong CSV co the la absolute path, hoac relative path tinh tu thu muc chua `pairing.csv`.
 Duong dan `page_map` cung duoc resolve tu thu muc chua `pairing.csv`. Neu mot row khong co `page_map`, tool dung preset theo `level/test` neu co.
 Neu row khong co `page_map` nhung co `ocr_start_page` va `ocr_end_page`, batch se auto-detect page map trong pham vi do va xuat `{output_name}_detected_page_map.json`.
+CSV chap nhan `printed_start_page` hoac `printed_part1_page`; ca hai deu la trang in cua Part 1 de tinh `pdf_offset`.
 
 Sau batch, tool xuat `batch_report.csv` voi cac cot:
 

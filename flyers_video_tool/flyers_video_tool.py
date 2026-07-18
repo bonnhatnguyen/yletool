@@ -298,6 +298,15 @@ def _default_layout_for_page_count(page_count: int) -> str:
     return "grid"
 
 
+def _resolve_printed_start_page(
+    printed_start_page: Optional[int] = None,
+    printed_part1_page: Optional[int] = None,
+) -> Optional[int]:
+    if printed_start_page is not None and printed_part1_page is not None and printed_start_page != printed_part1_page:
+        raise ValueError("--printed-start-page and --printed-part1-page must refer to the same printed page.")
+    return printed_start_page if printed_start_page is not None else printed_part1_page
+
+
 def build_page_map_from_ocr_results(
     ocr_results: Sequence[dict],
     level: str = "flyers",
@@ -306,9 +315,11 @@ def build_page_map_from_ocr_results(
     max_page: Optional[int] = None,
     min_confidence: float = 55.0,
     printed_start_page: Optional[int] = None,
+    printed_part1_page: Optional[int] = None,
 ) -> Tuple[dict, List[str]]:
     if not ocr_results:
         raise ValueError("OCR results are empty. Cannot build page map.")
+    printed_start_page = _resolve_printed_start_page(printed_start_page, printed_part1_page)
 
     sorted_results = sorted(
         [
@@ -1128,12 +1139,14 @@ def auto_detect_page_map_from_pdf(
     ocr_language: str = "eng",
     min_confidence: float = 55.0,
     printed_start_page: Optional[int] = None,
+    printed_part1_page: Optional[int] = None,
 ) -> Tuple[dict, List[str], List[dict]]:
     if end_page is None:
         raise ValueError(
             "Auto page map requires a bounded Listening page range. "
             "Set --ocr-end-page or --listening-end-page to avoid scanning the whole PDF."
         )
+    printed_start_page = _resolve_printed_start_page(printed_start_page, printed_part1_page)
     LOGGER.info("Auto detecting page map with local OCR...")
     ocr_results = ocr_pdf_pages(
         pdf_path=pdf_path,
@@ -1527,9 +1540,16 @@ def read_pairing_csv(pairing_csv: str | Path, output_dir: Optional[str | Path] =
             raw_ocr_start = (row.get("ocr_start_page") or "").strip()
             raw_ocr_end = (row.get("ocr_end_page") or "").strip()
             raw_printed_start = (row.get("printed_start_page") or "").strip()
+            raw_printed_part1 = (row.get("printed_part1_page") or "").strip()
             ocr_start_page = int(raw_ocr_start) if raw_ocr_start else None
             ocr_end_page = int(raw_ocr_end) if raw_ocr_end else None
-            printed_start_page = int(raw_printed_start) if raw_printed_start else None
+            try:
+                printed_start_page = _resolve_printed_start_page(
+                    int(raw_printed_start) if raw_printed_start else None,
+                    int(raw_printed_part1) if raw_printed_part1 else None,
+                )
+            except ValueError as exc:
+                raise ValueError(f"pairing.csv line {line_number}: {exc}") from exc
             pairs.append(
                 {
                     "base_name": output_name,
@@ -3007,7 +3027,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ocr-end-page", type=int, help="Last PDF page to OCR for page-map detection.")
     parser.add_argument("--listening-start-page", type=int, help="Alias for --ocr-start-page.")
     parser.add_argument("--listening-end-page", type=int, help="Alias for --ocr-end-page.")
-    parser.add_argument("--printed-start-page", type=int, help="Printed page number of Part 1 for offset calculation.")
+    parser.add_argument(
+        "--printed-start-page",
+        "--printed-part1-page",
+        dest="printed_start_page",
+        type=int,
+        help="Printed page number of Part 1 for offset calculation.",
+    )
     parser.add_argument("--ocr-render-scale", type=float, default=2.0, help="PDF render scale for OCR.")
     parser.add_argument("--ocr-min-confidence", type=float, default=55.0, help="Warn below this average OCR confidence.")
     parser.add_argument("--test", type=int, default=1, help="Test number for default page map (fallback).")
